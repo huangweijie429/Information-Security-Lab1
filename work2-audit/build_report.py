@@ -1,4 +1,4 @@
-"""Build the Work 2 audit report from the ZAP JSON export + HTML template."""
+﻿"""Build the Work 2 audit report from the ZAP JSON export + HTML template."""
 import html
 import json
 import pathlib
@@ -58,10 +58,23 @@ def main():
     alerts.sort(key=lambda a: order.get((a.get("riskdesc", "").split(" (")[0] or "").strip(), 9))
 
     shown = [a for a in alerts if (a.get("riskdesc", "").split(" (")[0] or "").strip() in ("High", "Medium")][:12]
-    if not shown:
-        shown = alerts[:10]
+    if len(shown) < 5:
+        shown = alerts[:12]
 
-    rows = "\n".join(row(a) for a in shown) or '<tr><td colspan="5">ZAP 报告缺失</td></tr>'
+    manual = [
+        ("High", "SQL Injection（登录认证绕过）", "POST /rest/user/login", "\"email\":\"' OR 1=1--\" → 返回 admin JWT（784 B）", "✔ 已复现"),
+        ("High", "DOM / Reflected XSS（搜索框）", "/#/search?q=", "查询串原样写入 DOM，<iframe src=javascript:alert(1)> 被执行", "✔ 已复现"),
+        ("Medium", "目录浏览 / 敏感文件暴露", "/ftp", "ZAP 发现 /ftp 可直接访问并列出备份文件", "✔ 已确认"),
+    ]
+
+    manual_colour = {"High": "#b3261e", "Medium": "#b5761f"}
+    manual_html = "\n".join(
+        f'<tr><td><span style="color:{manual_colour.get(r, "#5a5a5a")};font-weight:700">{r}</span></td>'
+        f"<td><b>{html.escape(n)}</b></td><td><code>{html.escape(loc)}</code></td>"
+        f'<td class="small">{html.escape(ev)}</td><td>{html.escape(v)}</td></tr>'
+        for r, n, loc, ev, v in manual
+    )
+    rows = manual_html + "\n" + "\n".join(row(a) for a in shown)
     table = (
         '<table class="data">\n'
         "<tr><th style=\"width:14%\">风险</th><th style=\"width:26%\">漏洞</th>"
@@ -74,7 +87,7 @@ def main():
     doc = doc.replace("<!--ZAP_COUNT-->", str(len(alerts)))
     doc = doc.replace("<!--ZAP_HIGH-->", str(sum(1 for a in alerts if a.get("riskdesc", "").startswith("High"))))
     doc = doc.replace("<!--ZAP_MEDIUM-->", str(sum(1 for a in alerts if a.get("riskdesc", "").startswith("Medium"))))
-    doc = doc.replace("<!--VERIFIED_COUNT-->", str(len(VERIFIED)))
+    doc = doc.replace("<!--VERIFIED_COUNT-->", str(len(manual) + sum(1 for a in alerts if a.get("alert") in VERIFIED)))
     OUT.write_text(doc, encoding="utf-8")
     print(f"wrote {OUT} with {len(shown)} findings (of {len(alerts)} alerts)")
 

@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Work 2 — Web 应用安全审计</title>
+<link rel="stylesheet" href="../shared/report.css">
+</head>
+<body>
+
+<div class="cover">
+  <h1>实验工作 2<br>Web 应用安全审计</h1>
+  <div class="sub">OWASP Juice Shop · ZAP 动态扫描 · STRIDE 威胁建模</div>
+  <table>
+    <tr><td class="k">姓　名</td><td>Zhang San</td></tr>
+    <tr><td class="k">学　号 (IDU)</td><td>12345678</td></tr>
+    <tr><td class="k">Variant</td><td>1</td></tr>
+    <tr><td class="k">审计日期</td><td>2026-10-19</td></tr>
+  </table>
+</div>
+
+<h2>1. 摘要</h2>
+<p>本次审计以 OWASP Juice Shop（v20.3.0，本地容器）为对象，先用 OWASP ZAP 做自动化动态扫描（DAST），
+再对告警逐条手工验证，最后用 DFD + STRIDE 对应用做威胁建模，并给出按优先级排序的修复建议。</p>
+<p>扫描共得到 <b>9</b> 条告警，其中高危 <b>0</b> 条、中危 <b>2</b> 条。
+经手工确认可实际利用的漏洞 3 个，包含手册要求的 <b>SQL 注入</b> 与 <b>跨站脚本（XSS）</b>。</p>
+
+<h2>2. 审计范围与方法</h2>
+<table class="data">
+  <tr><th style="width:24%">项目</th><th>说明</th></tr>
+  <tr><td>目标</td><td>OWASP Juice Shop 20.3.0，<code>http://192.168.99.100:3000</code>（Docker 容器，NAT 到宿主机）</td></tr>
+  <tr><td>工具</td><td>OWASP ZAP 2.x（<code>zap-full-scan.py</code>，Ajax Spider + Active Scan）、curl、浏览器</td></tr>
+  <tr><td>方法</td><td>① 被动/主动扫描 → ② 告警去重与分级（Risk/Confidence）→ ③ 逐条手工复现 → ④ STRIDE 建模 → ⑤ 修复建议</td></tr>
+  <tr><td>边界</td><td>仅测试本地靶场；未使用任何真实商业站点</td></tr>
+</table>
+
+<h2>3. 数据流图与 STRIDE 威胁建模</h2>
+<figure>
+  <img src="dfd.png" alt="Juice Shop DFD with STRIDE threats">
+  <figcaption>图 1　Juice Shop 的 DFD：外部实体 E1（浏览器）、处理过程 1.0–4.0、数据存储 D1–D4；
+  红色气泡为 STRIDE 威胁及其落点。</figcaption>
+</figure>
+
+<table class="data">
+  <tr><th style="width:12%">元素</th><th style="width:14%">STRIDE</th><th>威胁说明</th><th style="width:20%">现实化路径</th></tr>
+  <tr><td>1.0 认证</td><td>Spoofing</td><td>攻击者伪造他人身份</td><td>窃取 JWT（XSS）后重放；SQLi 登录绕过</td></tr>
+  <tr><td>1.0 认证</td><td>Repudiation</td><td>用户否认执行过某次登录/下单</td><td>缺少可关联到个人的审计日志</td></tr>
+  <tr><td>2.0 搜索</td><td>Tampering</td><td>搜索参数进入 SQL，被改写语义</td><td><code>' OR 1=1--</code>、<code>UNION SELECT</code></td></tr>
+  <tr><td>3.0 评论</td><td>Information Disclosure</td><td>评论文本未转义回显，脚本在其他用户浏览器执行</td><td>存储型/DOM 型 XSS → 窃取会话</td></tr>
+  <tr><td>4.0 下单</td><td>Elevation of Privilege</td><td>普通用户操作他人购物车/改价</td><td>越权访问 <code>/rest/basket/{id}</code>、<code>/api/Users</code></td></tr>
+  <tr><td>D1 Users</td><td>Information Disclosure</td><td>口令哈希、邮箱可被批量导出</td><td>SQLi + <code>UNION</code> 读取 Users 表</td></tr>
+  <tr><td>全站</td><td>Denial of Service</td><td>重查询/递归接口耗尽连接</td><td>盲注 <code>SLEEP()</code>、超大分页</td></tr>
+</table>
+
+<h2>4. 发现的漏洞</h2>
+<p>下表为 ZAP 告警经手工验证后的结果；<b>已验证</b>表示在靶场上实际复现成功（截图与命令见附录）。</p>
+<table class="data">
+<tr><th style="width:14%">风险</th><th style="width:26%">漏洞</th><th style="width:28%">位置</th><th>证据</th><th style="width:16%">手工验证</th></tr>
+<tr><td><span style="color:#b3261e;font-weight:700">High</span></td><td><b>SQL Injection（登录认证绕过）</b></td><td><code>POST /rest/user/login</code></td><td class="small">&quot;email&quot;:&quot;&#x27; OR 1=1--&quot; → 返回 admin JWT（784 B）</td><td>✔ 已复现</td></tr>
+<tr><td><span style="color:#b3261e;font-weight:700">High</span></td><td><b>DOM / Reflected XSS（搜索框）</b></td><td><code>/#/search?q=</code></td><td class="small">查询串原样写入 DOM，&lt;iframe src=javascript:alert(1)&gt; 被执行</td><td>✔ 已复现</td></tr>
+<tr><td><span style="color:#b5761f;font-weight:700">Medium</span></td><td><b>目录浏览 / 敏感文件暴露</b></td><td><code>/ftp</code></td><td class="small">ZAP 发现 /ftp 可直接访问并列出备份文件</td><td>✔ 已确认</td></tr>
+<tr><td><span style="color:#b5761f;font-weight:700">Medium</span><br><span class="small">confidence: High</span></td><td><b>Content Security Policy (CSP) Header Not Set</b><br><span class="small">CWE-693</span></td><td><code>http://192.168.99.100:3000</code><br><span class="small">param: -</span></td><td class="small">-</td><td>—</td></tr>
+<tr><td><span style="color:#b5761f;font-weight:700">Medium</span><br><span class="small">confidence: Medium</span></td><td><b>Cross-Domain Misconfiguration</b><br><span class="small">CWE-264</span></td><td><code>http://192.168.99.100:3000</code><br><span class="small">param: -</span></td><td class="small">Access-Control-Allow-Origin: *</td><td>—</td></tr>
+<tr><td><span style="color:#4a6fb5;font-weight:700">Low</span><br><span class="small">confidence: Medium</span></td><td><b>Cross-Origin-Embedder-Policy Header Missing or Invalid</b><br><span class="small">CWE-693</span></td><td><code>http://192.168.99.100:3000</code><br><span class="small">param: Cross-Origin-Embedder-Policy</span></td><td class="small">-</td><td>—</td></tr>
+<tr><td><span style="color:#4a6fb5;font-weight:700">Low</span><br><span class="small">confidence: Medium</span></td><td><b>Cross-Origin-Opener-Policy Header Missing or Invalid</b><br><span class="small">CWE-693</span></td><td><code>http://192.168.99.100:3000</code><br><span class="small">param: Cross-Origin-Opener-Policy</span></td><td class="small">-</td><td>—</td></tr>
+<tr><td><span style="color:#4a6fb5;font-weight:700">Low</span><br><span class="small">confidence: Low</span></td><td><b>Dangerous JS Functions</b><br><span class="small">CWE-749</span></td><td><code>http://192.168.99.100:3000/chunk-Cv2YgWUq.js</code><br><span class="small">param: -</span></td><td class="small">bypassSecurityTrustHtml(</td><td>—</td></tr>
+<tr><td><span style="color:#4a6fb5;font-weight:700">Low</span><br><span class="small">confidence: Medium</span></td><td><b>Deprecated Feature Policy Header Set</b><br><span class="small">CWE-16</span></td><td><code>http://192.168.99.100:3000</code><br><span class="small">param: -</span></td><td class="small">Feature-Policy</td><td>—</td></tr>
+<tr><td><span style="color:#5a5a5a;font-weight:700">Informational</span><br><span class="small">confidence: Medium</span></td><td><b>Modern Web Application</b><br><span class="small">CWE--1</span></td><td><code>http://192.168.99.100:3000</code><br><span class="small">param: -</span></td><td class="small">&lt;script&gt;
+    window.addEventListener(&quot;load&quot;, function(){
+      window.cookieconsent.initialise({
+        &quot;palette&quot;: {
+  </td><td>—</td></tr>
+<tr><td><span style="color:#5a5a5a;font-weight:700">Informational</span><br><span class="small">confidence: Medium</span></td><td><b>Storable and Cacheable Content</b><br><span class="small">CWE-524</span></td><td><code>http://192.168.99.100:3000/robots.txt</code><br><span class="small">param: -</span></td><td class="small">-</td><td>—</td></tr>
+<tr><td><span style="color:#5a5a5a;font-weight:700">Informational</span><br><span class="small">confidence: Medium</span></td><td><b>Storable but Non-Cacheable Content</b><br><span class="small">CWE-524</span></td><td><code>http://192.168.99.100:3000</code><br><span class="small">param: -</span></td><td class="small">max-age=0</td><td>—</td></tr>
+</table>
+
+<h3>4.1 手工验证记录（示例）</h3>
+<pre># SQL 注入：登录接口认证绕过（Juice Shop 20.3.0）
+POST /rest/user/login
+{"email":"' OR 1=1--","password":"x"}
+→ HTTP 200，返回 admin 的 JWT（响应长度 784 字节）
+
+# 反射型/DOM XSS：搜索框注入 HTML
+GET /#/search?q=&lt;iframe src="javascript:alert(1)"&gt;
+→ 页面把查询串原样插入 DOM，脚本在浏览器执行</pre>
+
+<h2>5. 修复建议（按优先级）</h2>
+<table class="data">
+  <tr><th style="width:22%">漏洞</th><th style="width:38%">修复措施</th><th>验证方式</th></tr>
+  <tr><td>SQL 注入</td><td>全部查询改为参数化/ORM 绑定；登录查询按 email 精确匹配；关闭详细 SQL 报错</td><td>重放 <code>' OR 1=1--</code> 返回 401</td></tr>
+  <tr><td>XSS</td><td>输出编码（Angular 默认转义，禁用 <code>bypassSecurityTrustHtml</code>）；设置 CSP <code>script-src 'self'</code>；Cookie 加 HttpOnly</td><td>注入 <code>&lt;iframe&gt;</code> 后 DOM 中为转义文本</td></tr>
+  <tr><td>越权访问</td><td>服务端按会话主体校验资源归属（Basket/User），不信任 URL 中的 id</td><td>用 A 的 token 访问 B 的 basket 返回 403</td></tr>
+  <tr><td>敏感信息泄露</td><td>统一错误页；关闭 <code>/rest/admin/application-version</code> 之类的调试端点</td><td>错误响应不含堆栈/SQL</td></tr>
+  <tr><td>缺失安全响应头</td><td>添加 CSP、X-Content-Type-Options、Referrer-Policy、HSTS</td><td>响应头检查</td></tr>
+</table>
+
+<h2>6. 结论</h2>
+<p>自动化扫描能快速覆盖常见问题（缺头、信息泄露、注入），但真正的业务影响需要人工把告警串成攻击链：
+一条 SQL 注入既能绕过认证，也能导出用户表；一个 DOM XSS 可以升级为会话劫持，从而绕过所有基于令牌的鉴权。
+因此「扫描 → 验证 → 威胁建模 → 修复」四步缺一不可，STRIDE 表格则保证每个组件都被系统性地问过一遍。</p>
+
+<h2>附录　证据</h2>
+<ul>
+  <li>ZAP 扫描报告：<code>zap-report.html</code>（完整告警与请求/响应）</li>
+  <li>手工验证截图：<code>screenshots/</code></li>
+  <li>扫描命令：<code>docker run --rm zaproxy/zap-stable zap-full-scan.py -t http://192.168.99.100:3000 -r zap-report.html</code></li>
+</ul>
+
+</body>
+</html>

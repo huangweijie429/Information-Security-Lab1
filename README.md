@@ -5,7 +5,7 @@ Four lab works (10 points each) from the HDU IS manual, kept in one repository.
 | # | Work | Directory | Status |
 |---|------|-----------|--------|
 | 1 | Secure REST API + CI/CD + real CVE analysis | [`work1-api`](work1-api/README.md), [`work1-cve`](work1-cve/README.md) | done (CI green, CVE verified) |
-| 2 | Web application security audit (DAST + STRIDE) | [`work2-audit`](work2-audit/README.md) | scanning |
+| 2 | Web application security audit (DAST + STRIDE) | [`work2-audit`](work2-audit/README.md) | report + ZAP export ready |
 | 3 | Computer attacks: digraph analysis | [`work3-attack`](work3-attack/README.md) | report + slides ready |
 | 4 | Password audit, data leaks, digital hygiene | [`work4-hygiene`](work4-hygiene/README.md) | template ready, needs your screenshots |
 
