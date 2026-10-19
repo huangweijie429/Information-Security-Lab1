@@ -2,10 +2,11 @@
 # Mirrors the public Vulhub configuration needed to trigger the traversal.
 FROM httpd:2.4.49
 
-# 1) enable CGI so a traversed binary can be executed
-RUN sed -i \
-      -e 's/^#LoadModule cgid_module/LoadModule cgid_module/' \
-      -e 's/^#LoadModule cgi_module/LoadModule cgi_module/' \
+# 1) enable CGI (and its script alias) so a traversed binary is executed, not served
+RUN sed -i -E \
+      -e 's|^[[:space:]]*#ScriptAlias /cgi-bin/|ScriptAlias /cgi-bin/|' \
+      -e 's|^[[:space:]]*#LoadModule cgid_module|LoadModule cgid_module|' \
+      -e 's|^[[:space:]]*#LoadModule cgi_module|LoadModule cgi_module|' \
       /usr/local/apache2/conf/httpd.conf
 
 # 2) allow the whole filesystem, the authorization mistake from the Vulhub PoC

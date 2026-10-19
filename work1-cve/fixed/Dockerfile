@@ -2,10 +2,10 @@
 FROM httpd:2.4.51
 
 # CGI stays enabled, but only inside cgi-bin — the traversal target /bin/sh is not reachable.
-RUN sed -i \
-      -e 's|^#ScriptAlias /cgi-bin/|ScriptAlias /cgi-bin/|' \
-      -e 's/^#LoadModule cgid_module/LoadModule cgid_module/' \
-      -e 's/^#LoadModule cgi_module/LoadModule cgi_module/' \
+RUN sed -i -E \
+      -e 's|^[[:space:]]*#ScriptAlias /cgi-bin/|ScriptAlias /cgi-bin/|' \
+      -e 's|^[[:space:]]*#LoadModule cgid_module|LoadModule cgid_module|' \
+      -e 's|^[[:space:]]*#LoadModule cgi_module|LoadModule cgi_module|' \
       /usr/local/apache2/conf/httpd.conf
 
 # Hardening: the filesystem root is not authorised at all (fixed default of 2.4.51

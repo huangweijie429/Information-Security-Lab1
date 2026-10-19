@@ -1,0 +1,2 @@
+﻿FIXED image
+POST /cgi-bin/.%2e/.%2e/.%2e/.%2e/bin/sh -> HTTP 400 (no uid output)

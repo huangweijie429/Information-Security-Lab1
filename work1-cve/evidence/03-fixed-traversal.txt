@@ -1,0 +1,2 @@
+﻿FIXED image (httpd 2.4.51 + Require all denied)
+GET /cgi-bin/.%2e/.%2e/.%2e/.%2e/etc/passwd -> HTTP 400 (no file content)
