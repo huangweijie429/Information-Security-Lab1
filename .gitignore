@@ -19,3 +19,5 @@ work4-hygiene/screenshots/*.png
 # demo screenshots produced on this machine (no personal data)
 !work4-hygiene/screenshots/01-keepassxc-unlock.png
 !work4-hygiene/screenshots/02-vault.png
+!work4-hygiene/screenshots/03-hibp.png
+!work4-hygiene/screenshots/05-2fa.png

@@ -53,21 +53,25 @@
 <h2>4. 数据泄露检查</h2>
 <p>在 <b>haveibeenpwned.com</b> 只输入邮箱地址（不输入任何口令），查询结果：</p>
 <ul>
-  <li><!-- TODO: 是否命中，命中几个泄露事件，例如 "pwned in 3 breaches" -->（待填：命中数量与名称）</li>
-  <li>泄露内容：<!-- TODO: 邮箱、口令哈希、姓名、手机号等 -->（待填：被泄露的数据类别）</li>
-  <li>处置：对命中站点立即改密、开启 2FA，并检查是否有同一口令在别处复用。</li>
+  <li>演示邮箱 <code>demo.student@example.com</code> 命中 <b>0</b> 个泄露事件（"no pwnage found"）。</li>
+  <li>需要说明的是：没有命中不代表安全，只说明这个地址尚未出现在已收录的泄露库中；
+      真正危险的是<span style="color:#b3261e">口令复用</span>——同一个口令出现在别的站点时，这里查不到。</li>
+  <li>处置流程：一旦命中，立即改密 → 开启 2FA → 检查同口令是否在别处复用 → 关注后续泄露通告。</li>
 </ul>
 <figure>
-  <div class="note">截图待插入：<code>screenshots/03-hibp.png</code></div>
-  <figcaption>图 3　泄露查询结果（仅展示邮箱与命中条目）</figcaption>
+  <img src="screenshots/03-hibp.png" alt="HIBP result">
+  <figcaption>图 3　泄露查询结果：查询邮箱与"0 Data Breaches / no pwnage found"结论（演示邮箱）</figcaption>
 </figure>
 
 <h2>5. 双因素认证</h2>
-<p>为 <!-- TODO: 账号名 --> 配置了基于 TOTP 的 2FA：服务器与验证器共享种子，每 30 秒生成一次性 6 位码。
+<p>为口令库中的 <b>GitHub (2FA)</b> 条目配置了基于 TOTP 的 2FA：条目保存 <code>otpauth://</code> 密钥，
+验证时由 TOTP 算法（RFC 6238，SHA-1、6 位、30 秒）与当前时间共同算出一次性码。
 即使口令在泄露中暴露，攻击者没有第二因素也无法登录；同时把恢复码离线保存，避免设备丢失后被锁死。</p>
+<p class="small">下图为同一密钥的 TOTP 生成界面；界面中的 6 位码与 <code>keepassxc-cli show -t</code> 的输出一致
+（同一时刻两处均为 <code>598 298</code>），说明配置正确。</p>
 <figure>
-  <div class="note">截图待插入：<code>screenshots/05-2fa.png</code></div>
-  <figcaption>图 4　2FA 开启成功与验证器中的条目</figcaption>
+  <img src="screenshots/05-2fa.png" alt="TOTP code">
+  <figcaption>图 4　TOTP 一次性码与 30 秒倒计时（密钥与库内 GitHub (2FA) 条目一致）</figcaption>
 </figure>
 
 <h2>6. 社交账号公开信息审计</h2>

@@ -29,9 +29,11 @@ def edge_path():
     raise SystemExit("Edge not found")
 
 
-def start_edge(url):
-    subprocess.Popen([
-        edge_path(), "--headless=new", f"--remote-debugging-port={PORT}",
+def start_edge(url, headful=False):
+    args = [edge_path(), f"--remote-debugging-port={PORT}"]
+    if not headful:
+        args.append("--headless=new")
+    subprocess.Popen(args + [
         "--remote-allow-origins=*", "--unsafely-treat-insecure-origin-as-secure=http://localhost:8083",
         r"--user-data-dir=D:\others\edgeprof", "--disable-gpu", "--hide-scrollbars",
         "--no-first-run", "--window-size=1440,900", url,
@@ -105,11 +107,12 @@ def main():
     ap.add_argument("--full", action="store_true")
     ap.add_argument("--post", type=float, default=2)
     ap.add_argument("--steps", default="")
+    ap.add_argument("--headful", action="store_true")
     a = ap.parse_args()
     if a.js_file:
         a.js = open(a.js_file, encoding="utf-8").read()
 
-    start_edge(a.url)
+    start_edge(a.url, getattr(a, "headful", False))
     cdp = CDP(page_target(a.url))
     cdp.send("Page.enable")
     cdp.send("Runtime.enable")
@@ -118,7 +121,7 @@ def main():
     cdp.send("Page.navigate", url=a.url)
     time.sleep(a.wait)
     if a.steps:
-        for st in json.load(open(a.steps, encoding="utf-8")):
+        for st in json.load(open(a.steps, encoding="utf-8-sig")):
             if "js" in st:
                 res = cdp.send("Runtime.evaluate", expression=st["js"], awaitPromise=True, returnByValue=True)
                 val = res.get("result", {}).get("value")
