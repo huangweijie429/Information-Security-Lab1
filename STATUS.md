@@ -1,4 +1,4 @@
-# 提交状态（STATUS）
+﻿# 提交状态（STATUS）
 
 最后更新：2026-10-19
 
@@ -6,11 +6,11 @@
 |---|---|---|---|
 | 1 | FastAPI 应用 + 测试 + CI | ✅ CI 全绿（bandit / pip-audit / pytest） | `work1-api/`，Actions 运行记录见仓库 Actions 页 |
 | 1 | CVE-2021-41773 复现与修复 | ✅ 漏洞版读到 `/etc/passwd`、RCE 得 `uid=1(daemon)`；修复版返回 400，回归通过 | `work1-cve/`，证据 `work1-cve/evidence/` |
-| 2 | DAST + STRIDE 审计报告 | ✅ 6 页 PDF，12 条发现（3 条手工验证 + 9 条 ZAP） | `work2-audit/Work2-Audit-Report.pdf` |
+| 2 | DAST + STRIDE 审计报告 | ✅ 6 页 PDF，12 条发现（3 条手工验证 + 9 条 ZAP） | `../Work2-Web安全审计报告.pdf`（Lab 根目录） |
 | 2 | ZAP 导出 | ✅ HTML + JSON | `work2-audit/zap-report.*` |
 | 2 | XSS 验证截图 | ✅ 真实执行证明（页面被注入脚本改写） | `work2-audit/screenshots/02-xss-dom.png` |
 | 3 | 攻击分析报告 + 有向图 | ✅ 6 页 PDF + PNG + 8 页演示稿 | `work3-attack/` |
-| 4 | 简报 | ✅ 5 页 PDF，含 4 张截图 | `work4-hygiene/Work4-Hygiene-Report.pdf` |
+| 4 | 简报 | ✅ 5 页 PDF，含 4 张截图 | `../Work4-口令与数字卫生简报.pdf`（Lab 根目录） |
 | 4 | 截图（5 张） | 🟡 4 张已生成，社交审计待补 | 见下 |
 
 ## Work 4 截图状态
@@ -29,7 +29,7 @@
 补齐后把图片放进 `work4-hygiene/screenshots/`，重新生成 PDF：
 
 ```powershell
-..\shared\build_pdf.ps1 -Html .\report.html -Pdf .\Work4-Hygiene-Report.pdf
+..\shared\build_pdf.ps1 -Html .\report.html -Pdf '..\Work4-口令与数字卫生简报.pdf'
 ```
 
 ## 环境说明（可复现）
