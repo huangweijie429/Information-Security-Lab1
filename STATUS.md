@@ -15,13 +15,13 @@
 
 ## Work 4 还差什么
 
-| 截图 | 卡点 | 解法 |
+| 截图 | 状态 | 说明 |
 |---|---|---|
-| `01-…` 口令管理器安装 | KeePassXC 默认把窗口排除在屏幕捕获之外（截出来是桌面背景） | 打开 KeePassXC → 设置 → 安全 → 取消「隐藏窗口以防屏幕捕获」，我即可自动截图 |
-| `02-…` 密码库主界面 | 同上（库已建好：`D:\others\vault.kdbx`，主口令 `DemoMaster!2026`，5 个 20 位随机口令） | 同上 |
-| `05-2fa.png` | 需要能开 TOTP 的真实账号 | 用手机验证器开任意账号的 2FA 后截图 |
-| `03-hibp.png` | 必须用本人邮箱查询，代查即伪造证据 | 自行在 haveibeenpwned.com 查询并截图 |
-| `06-social-audit.png` | 必须登录本人社交账号 | 无痕窗口打开自己主页截图 |
+| `01-keepassxc-unlock.png` | ✅ 已生成 | KeePassXC 解锁界面（`--allow-screencapture` 绕过窗口捕获保护后截取） |
+| `02-vault.png` | ✅ 已生成 | 密码库主界面，5 个账号条目 |
+| `05-2fa.png` | ⛔ 待补 | 需要能开 TOTP 的真实账号（手机验证器） |
+| `03-hibp.png` | ⛔ 待补 | 必须用本人邮箱查询，代查即伪造证据 |
+| `06-social-audit.png` | ⛔ 待补 | 必须登录本人社交账号 |
 
 补齐后把图片放进 `work4-hygiene/screenshots/`，重新生成 PDF：
 

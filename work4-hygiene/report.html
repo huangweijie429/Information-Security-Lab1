@@ -26,12 +26,16 @@
 提交前请用你本人的真实自查结果替换第 3–6 节内容与截图。</div>
 
 <h2>2. 口令管理器</h2>
-<p>使用免费口令管理器（<b>Bitwarden</b> 或 <b>KeePassXC</b> 均可）建立密码库。主口令按「四个随机词 + 数字 + 符号」构造，长度 20 位以上，
-只存在于记忆中，不写入任何文件、不与其他站点复用。库内为每个账号保存独立的随机口令，
-并开启 Bitwarden 自身的 2FA。</p>
+<p>使用免费、可离线运行的 <b>KeePassXC</b>（便携版，无需注册账号）建立密码库。主口令按「随机词 + 数字 + 符号」构造，
+长度 20 位以上，只存在于记忆中，不写入任何文件、不与其他站点复用。库内为每个账号保存独立的随机口令，
+数据库文件本身用 AES-256 加密。</p>
 <figure>
-  <div class="note">截图待插入：<code>screenshots/01-bitwarden-setup.png</code>、<code>02-vault.png</code>（含打码）</div>
-  <figcaption>图 1　密码库初始化与主界面（敏感字段已打码）</figcaption>
+  <img src="screenshots/01-keepassxc-unlock.png" alt="KeePassXC unlock">
+  <figcaption>图 1　口令管理器与主口令解锁界面（数据库 `vault.kdbx`，AES-256 加密）</figcaption>
+</figure>
+<figure>
+  <img src="screenshots/02-vault.png" alt="KeePassXC vault">
+  <figcaption>图 2　密码库主界面：5 个账号条目，口令由生成器随机产生（列表不显示口令明文）</figcaption>
 </figure>
 
 <h2>3. 现有口令审计</h2>
@@ -54,7 +58,7 @@
 </ul>
 <figure>
   <div class="note">截图待插入：<code>screenshots/03-hibp.png</code></div>
-  <figcaption>图 2　泄露查询结果（仅展示邮箱与命中条目）</figcaption>
+  <figcaption>图 3　泄露查询结果（仅展示邮箱与命中条目）</figcaption>
 </figure>
 
 <h2>5. 双因素认证</h2>
@@ -62,7 +66,7 @@
 即使口令在泄露中暴露，攻击者没有第二因素也无法登录；同时把恢复码离线保存，避免设备丢失后被锁死。</p>
 <figure>
   <div class="note">截图待插入：<code>screenshots/05-2fa.png</code></div>
-  <figcaption>图 3　2FA 开启成功与验证器中的条目</figcaption>
+  <figcaption>图 4　2FA 开启成功与验证器中的条目</figcaption>
 </figure>
 
 <h2>6. 社交账号公开信息审计</h2>
@@ -70,7 +74,7 @@
 好友列表、以及带地理位置的动态。这些信息足以支撑一次精准的钓鱼或社工攻击（例如冒充学校教务处发送「补考通知」）。</p>
 <figure>
   <div class="note">截图待插入：<code>screenshots/06-social-audit.png</code></div>
-  <figcaption>图 4　未登录状态下的公开信息</figcaption>
+  <figcaption>图 5　未登录状态下的公开信息</figcaption>
 </figure>
 
 <h2>7. 数字卫生规则（5–7 条）</h2>

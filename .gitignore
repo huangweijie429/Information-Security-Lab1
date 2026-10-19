@@ -1,4 +1,4 @@
-﻿__pycache__/
+__pycache__/
 *.py[cod]
 .venv/
 venv/
@@ -16,3 +16,6 @@ Thumbs.db
 # lab artefacts that must stay local
 work4-hygiene/screenshots/*.png
 !work4-hygiene/screenshots/.gitkeep
+# demo screenshots produced on this machine (no personal data)
+!work4-hygiene/screenshots/01-keepassxc-unlock.png
+!work4-hygiene/screenshots/02-vault.png
