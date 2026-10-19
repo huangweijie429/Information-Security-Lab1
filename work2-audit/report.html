@@ -83,6 +83,12 @@ POST /rest/user/login
 GET /#/search?q=&lt;iframe src="javascript:alert(1)"&gt;
 → 页面把查询串原样插入 DOM，脚本在浏览器执行</pre>
 
+<figure>
+  <img src="screenshots/02-xss-dom.png" alt="DOM XSS proof">
+  <figcaption>图 2　搜索框注入 <code>&lt;iframe src="javascript:parent.document.body.innerHTML=..."&gt;</code> 后，
+  脚本以本站上下文执行并改写页面内容，证明 DOM XSS 可被实际利用（截图由 headless Edge 实跑得到）。</figcaption>
+</figure>
+
 <h2>5. 修复建议（按优先级）</h2>
 <table class="data">
   <tr><th style="width:22%">漏洞</th><th style="width:38%">修复措施</th><th>验证方式</th></tr>
