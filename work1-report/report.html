@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Work 1 — 安全 REST API、CI/CD 与 CVE 分析</title>
+<link rel="stylesheet" href="../shared/report.css">
+</head>
+<body>
+
+<div class="cover">
+  <h1>实验工作 1<br>安全 REST API、CI/CD 与真实 CVE 分析</h1>
+  <div class="sub">FastAPI + JWT · GitHub Actions · CVE-2021-41773 复现与修复</div>
+  <table>
+    <tr><td class="k">姓　名</td><td>Zhang San</td></tr>
+    <tr><td class="k">学　号 (IDU)</td><td>12345678</td></tr>
+    <tr><td class="k">Variant</td><td>1</td></tr>
+    <tr><td class="k">仓库</td><td>github.com/huangweijie429/Information-Security-Lab1</td></tr>
+  </table>
+</div>
+
+<h2>1. 工作目的</h2>
+<p>本工作覆盖一个 API 的完整安全生命周期：按 OWASP Top 10 设计防护、把安全工具接入 CI/CD、
+在受控环境（Vulhub 同款配置）中复现一个真实 CVE、分析根因、实施修复并验证攻击失效与功能回归。</p>
+
+<h2>2. API 设计与实现</h2>
+<p>技术栈：<b>FastAPI + SQLite（标准库 sqlite3）+ bcrypt + PyJWT</b>，代码位于 <code>work1-api/</code>。</p>
+<table class="data">
+  <tr><th style="width:16%">方法</th><th style="width:26%">路径</th><th style="width:14%">鉴权</th><th>说明</th></tr>
+  <tr><td>GET</td><td><code>/health</code></td><td>否</td><td>存活探针</td></tr>
+  <tr><td>POST</td><td><code>/auth/login</code></td><td>否</td><td>接受 <code>{username, password}</code>，返回 JWT</td></tr>
+  <tr><td>GET</td><td><code>/api/data</code></td><td>Bearer</td><td>帖子列表，支持 <code>?q=</code> 过滤</td></tr>
+  <tr><td>GET</td><td><code>/api/me</code></td><td>Bearer</td><td>当前用户资料（自选的第三个接口）</td></tr>
+</table>
+
+<h2>3. 安全措施</h2>
+<table class="data">
+  <tr><th style="width:22%">风险</th><th>实现方式</th></tr>
+  <tr><td>SQL 注入</td><td>所有语句使用 <code>?</code> 参数化查询（登录查询、<code>q</code> 过滤），不做字符串拼接；
+      用户名额外做白名单校验 <code>^[A-Za-z0-9_.-]+$</code></td></tr>
+  <tr><td>XSS</td><td>返回前用 <code>html.escape()</code> 转义所有用户内容；回归测试断言 <code>&lt;b&gt;</code> 变成 <code>&amp;lt;b&amp;gt;</code></td></tr>
+  <tr><td>认证失败</td><td>bcrypt（cost 12）存口令哈希；HS256 JWT 带 <code>exp</code>/<code>iss</code>；
+      所有受保护端点经 <code>HTTPBearer</code> 依赖校验，缺失/伪造 token 返回 401</td></tr>
+</table>
+
+<h2>4. CI/CD 流水线</h2>
+<p><code>.github/workflows/ci.yml</code> 在每次 push 与 pull request 触发，依次执行：</p>
+<ol>
+  <li><b>SAST</b>：<code>bandit -r app</code>（0 告警）</li>
+  <li><b>SCA</b>：<code>pip-audit -r requirements.txt --strict</code>（No known vulnerabilities）</li>
+  <li><b>测试</b>：<code>pytest -q</code>（10 个用例全过，覆盖 SQLi/XSS/鉴权回归）</li>
+</ol>
+<p>运行记录：仓库 Actions 页，例如 run 39257053599（首次全绿）。</p>
+
+<h2>5. CVE-2021-41773 复现</h2>
+<p>目标：Apache HTTP Server 2.4.49 路径穿越（同时可导致 CGI 命令执行）。
+环境按 Vulhub 同款配置构建（<code>work1-cve/Dockerfile</code>）：启用 <code>mod_cgi</code> 与
+<code>ScriptAlias</code>，并把 <code>&lt;Directory /&gt;</code> 设为 <code>Require all granted</code>。</p>
+<table class="data">
+  <tr><th style="width:44%">请求</th><th>漏洞版 2.4.49</th><th>修复版 2.4.51</th></tr>
+  <tr><td><code>GET /cgi-bin/.%2e/.%2e/.%2e/.%2e/etc/passwd</code></td>
+      <td><b>HTTP 200</b>，返回 <code>root:x:0:0:root:/root:/bin/bash</code></td>
+      <td>HTTP 400，无文件内容</td></tr>
+  <tr><td><code>POST …/bin/sh</code>，body 为 <code>echo Content-Type: text/plain; echo; id</code></td>
+      <td><b>HTTP 200</b>，<code>uid=1(daemon) gid=1(daemon)</code></td>
+      <td>HTTP 400，无输出</td></tr>
+  <tr><td><code>GET /cgi-bin/hello.sh</code>（回归）</td>
+      <td>200 hello from cgi</td>
+      <td>200 hello from cgi（功能未破坏）</td></tr>
+</table>
+<p class="small">完整命令与输出见 <code>work1-cve/evidence/01–05-*.txt</code>。</p>
+
+<h2>6. 根因分析</h2>
+<p>2.4.49 重写了路径规范化（<code>ap_normalize_path</code>）：它只对「从文档根开始」的路径展开 <code>%2e</code> 段，
+没有拒绝逃逸出文档根的 <code>..</code> 序列，于是 <code>/.%2e/.%2e/…</code> 在鉴权检查之后、文件查找之前被规范化成
+<code>../../..</code>，绕过了访问控制。两个配置选择把「文件读取」放大成「命令执行」：</p>
+<ol>
+  <li><code>&lt;Directory /&gt;</code> 允许访问整个文件系统，使逃逸路径通过鉴权；</li>
+  <li>启用了 <code>mod_cgi</code> 与 <code>ScriptAlias</code>，被穿越到的可执行文件会以请求体作为输入被执行。</li>
+</ol>
+<p>因此这是一个<b>输入处理缺陷</b>（用户可控路径未完整规范化），而非内存安全问题。</p>
+
+<h2>7. 修复与验证</h2>
+<table class="data">
+  <tr><th style="width:18%">层次</th><th style="width:40%">改动</th><th>为什么有效</th></tr>
+  <tr><td>补丁</td><td>镜像升级 <code>httpd:2.4.49 → 2.4.51</code></td>
+      <td>2.4.51 拒绝任何规范化后逃逸文档根的路径，并封堵 2.4.50 的双重编码 <code>%252e</code> 绕过</td></tr>
+  <tr><td>加固</td><td><code>&lt;Directory /&gt;</code> 改为 <code>Require all denied</code>，CGI 仅在 cgi-bin 内</td>
+      <td>移除第二个前提：即使将来再出现规范化漏洞，穿越路径也无法通过鉴权</td></tr>
+</table>
+<p>修复后同一 PoC 返回 400，正常 CGI 与首页仍可用（回归通过）。<code>poc.sh</code> 可一条命令对任意实例做验证：
+漏洞版退出码 1，修复版 0。</p>
+
+<h2>8. 结论</h2>
+<p>「参数化查询 + 输出转义 + 强认证」能把应用层的注入与脚本执行风险压到很低，但它无法阻止
+<b>基础设施组件自身的缺陷</b>。这次 CVE 的教训是双层的：及时打补丁（消除已知漏洞），
+以及最小权限配置（即使补丁缺失，也把影响面从 RCE 压到 403）。两者叠加，才让回归测试同时证明
+「攻击失效」和「功能未坏」。</p>
+
+</body>
+</html>
