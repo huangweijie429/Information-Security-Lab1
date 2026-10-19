@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Work 2 — Web Application Security Audit</title>
+<link rel="stylesheet" href="../shared/report.css">
+</head>
+<body>
+
+<div class="cover">
+  <h1>Lab Work 2<br>Web Application Security Audit</h1>
+  <div class="sub">OWASP Juice Shop &middot; ZAP dynamic scanning &middot; STRIDE threat modelling</div>
+  <table>
+    <tr><td class="k">Name</td><td>Zhang San</td></tr>
+    <tr><td class="k">Student ID</td><td>12345678</td></tr>
+    <tr><td class="k">Variant</td><td>1</td></tr>
+    <tr><td class="k">Audit date</td><td>2026-10-19</td></tr>
+  </table>
+</div>
+
+<h2>1. Summary</h2>
+<p>This audit targets OWASP Juice Shop (v20.3.0, local container). OWASP ZAP was used for automated dynamic
+scanning (DAST), every alert was then verified by hand, and the application was modelled with a DFD and STRIDE.
+Finally, remediation is prioritised.</p>
+<p>The scan produced <b>9</b> alerts, of which <b>0</b> high and
+<b>2</b> medium. After manual verification, 3 vulnerabilities are confirmed
+exploitable, including the <b>SQL injection</b> and <b>cross-site scripting (XSS)</b> required by the manual.</p>
+
+<h2>2. Scope and method</h2>
+<table class="data">
+  <tr><th style="width:22%">Item</th><th>Detail</th></tr>
+  <tr><td>Target</td><td>OWASP Juice Shop 20.3.0 at <code>http://192.168.99.100:3000</code> (Docker container, NAT to the host)</td></tr>
+  <tr><td>Tools</td><td>OWASP ZAP 2.x (<code>zap-baseline.py</code>: spider + passive scan), curl, headless Edge</td></tr>
+  <tr><td>Method</td><td>① scan → ② de-duplicate and rank alerts (Risk/Confidence) → ③ reproduce each manually →
+      ④ STRIDE modelling → ⑤ remediation</td></tr>
+  <tr><td>Boundary</td><td>Only the local lab instance was tested; no real commercial site was touched</td></tr>
+</table>
+
+<h2>3. DFD and STRIDE threat modelling</h2>
+<figure>
+  <img src="dfd-en.png" alt="Juice Shop DFD with STRIDE threats">
+  <figcaption>Figure 1 — Juice Shop DFD: external entity E1 (browser), processes 1.0–4.0, data stores D1–D4;
+  red bubbles are STRIDE threats and where they land.</figcaption>
+</figure>
+
+<table class="data">
+  <tr><th style="width:12%">Element</th><th style="width:14%">STRIDE</th><th>Threat</th><th style="width:22%">Realisation path</th></tr>
+  <tr><td>1.0 Auth</td><td>Spoofing</td><td>Attacker impersonates another user</td><td>steal a JWT via XSS and replay it; SQLi login bypass</td></tr>
+  <tr><td>1.0 Auth</td><td>Repudiation</td><td>A user denies having performed an action</td><td>no audit trail linking actions to identities</td></tr>
+  <tr><td>2.0 Search</td><td>Tampering</td><td>The search parameter reaches SQL and rewrites it</td><td><code>' OR 1=1--</code>, <code>UNION SELECT</code></td></tr>
+  <tr><td>3.0 Reviews</td><td>Information Disclosure</td><td>Review text is echoed unescaped and runs in other browsers</td><td>stored/DOM XSS → session hijacking</td></tr>
+  <tr><td>4.0 Checkout</td><td>Elevation of Privilege</td><td>A normal user acts on someone else's basket or price</td><td><code>/rest/basket/{id}</code>, <code>/api/Users</code></td></tr>
+  <tr><td>D1 Users</td><td>Information Disclosure</td><td>Password hashes and emails can be dumped</td><td>SQLi + <code>UNION</code> against Users</td></tr>
+  <tr><td>Site-wide</td><td>Denial of Service</td><td>Heavy or recursive queries exhaust connections</td><td>blind <code>SLEEP()</code>, huge page sizes</td></tr>
+</table>
+
+<h2>4. Findings</h2>
+<p>Alerts from ZAP, verified by hand; <b>Verified</b> means the issue was actually reproduced on the lab target.</p>
+<table class="data">
+<tr><th style="width:14%">Risk</th><th style="width:26%">Issue</th><th style="width:28%">Location</th><th>Evidence</th><th style="width:16%">Manual check</th></tr>
+<tr><td><span style="color:#b3261e;font-weight:700">High</span></td><td><b>SQL injection (login bypass)</b></td><td><code>POST /rest/user/login</code></td><td class="small">&quot;email&quot;:&quot;&#x27; OR 1=1--&quot; returns the admin JWT (784 B)</td><td>&#10004; reproduced</td></tr>
+<tr><td><span style="color:#b3261e;font-weight:700">High</span></td><td><b>DOM / reflected XSS (search box)</b></td><td><code>/#/search?q=</code></td><td class="small">query string written into the DOM unescaped; &lt;iframe src=javascript:alert(1)&gt; executes</td><td>&#10004; reproduced</td></tr>
+<tr><td><span style="color:#b5761f;font-weight:700">Medium</span></td><td><b>Directory browsing / exposed files</b></td><td><code>/ftp</code></td><td class="small">ZAP found /ftp reachable and listing backup files</td><td>&#10004; confirmed</td></tr>
+<tr><td><span style="color:#b5761f;font-weight:700">Medium</span><br><span class="small">confidence: High</span></td><td><b>Content Security Policy (CSP) Header Not Set</b><br><span class="small">CWE-693</span></td><td><code>http://192.168.99.100:3000</code><br><span class="small">param: -</span></td><td class="small">-</td><td>&mdash;</td></tr>
+<tr><td><span style="color:#b5761f;font-weight:700">Medium</span><br><span class="small">confidence: Medium</span></td><td><b>Cross-Domain Misconfiguration</b><br><span class="small">CWE-264</span></td><td><code>http://192.168.99.100:3000</code><br><span class="small">param: -</span></td><td class="small">Access-Control-Allow-Origin: *</td><td>&mdash;</td></tr>
+<tr><td><span style="color:#4a6fb5;font-weight:700">Low</span><br><span class="small">confidence: Medium</span></td><td><b>Cross-Origin-Embedder-Policy Header Missing or Invalid</b><br><span class="small">CWE-693</span></td><td><code>http://192.168.99.100:3000</code><br><span class="small">param: Cross-Origin-Embedder-Policy</span></td><td class="small">-</td><td>&mdash;</td></tr>
+<tr><td><span style="color:#4a6fb5;font-weight:700">Low</span><br><span class="small">confidence: Medium</span></td><td><b>Cross-Origin-Opener-Policy Header Missing or Invalid</b><br><span class="small">CWE-693</span></td><td><code>http://192.168.99.100:3000</code><br><span class="small">param: Cross-Origin-Opener-Policy</span></td><td class="small">-</td><td>&mdash;</td></tr>
+<tr><td><span style="color:#4a6fb5;font-weight:700">Low</span><br><span class="small">confidence: Low</span></td><td><b>Dangerous JS Functions</b><br><span class="small">CWE-749</span></td><td><code>http://192.168.99.100:3000/chunk-Cv2YgWUq.js</code><br><span class="small">param: -</span></td><td class="small">bypassSecurityTrustHtml(</td><td>&mdash;</td></tr>
+<tr><td><span style="color:#4a6fb5;font-weight:700">Low</span><br><span class="small">confidence: Medium</span></td><td><b>Deprecated Feature Policy Header Set</b><br><span class="small">CWE-16</span></td><td><code>http://192.168.99.100:3000</code><br><span class="small">param: -</span></td><td class="small">Feature-Policy</td><td>&mdash;</td></tr>
+<tr><td><span style="color:#5a5a5a;font-weight:700">Informational</span><br><span class="small">confidence: Medium</span></td><td><b>Modern Web Application</b><br><span class="small">CWE--1</span></td><td><code>http://192.168.99.100:3000</code><br><span class="small">param: -</span></td><td class="small">&lt;script&gt;
+    window.addEventListener(&quot;load&quot;, function(){
+      window.cookieconsent.initialise({
+        &quot;palette&quot;: {
+  </td><td>&mdash;</td></tr>
+<tr><td><span style="color:#5a5a5a;font-weight:700">Informational</span><br><span class="small">confidence: Medium</span></td><td><b>Storable and Cacheable Content</b><br><span class="small">CWE-524</span></td><td><code>http://192.168.99.100:3000/robots.txt</code><br><span class="small">param: -</span></td><td class="small">-</td><td>&mdash;</td></tr>
+<tr><td><span style="color:#5a5a5a;font-weight:700">Informational</span><br><span class="small">confidence: Medium</span></td><td><b>Storable but Non-Cacheable Content</b><br><span class="small">CWE-524</span></td><td><code>http://192.168.99.100:3000</code><br><span class="small">param: -</span></td><td class="small">max-age=0</td><td>&mdash;</td></tr>
+</table>
+
+<h3>4.1 Manual verification log</h3>
+<pre># SQL injection: authentication bypass (Juice Shop 20.3.0)
+POST /rest/user/login
+{"email":"' OR 1=1--","password":"x"}
+-> HTTP 200, returns the admin JWT (response length 784 bytes)
+
+# DOM XSS: injected HTML in the search box
+GET /#/search?q=&lt;iframe src="javascript:alert(1)"&gt;
+-> the query string is inserted into the DOM as-is, the script executes</pre>
+
+<figure>
+  <img src="screenshots/02-xss-dom.png" alt="DOM XSS proof">
+  <figcaption>Figure 2 — After injecting <code>&lt;iframe src="javascript:document.body.innerHTML=..."&gt;</code> into the
+  search box, the script runs in the origin's context and rewrites the page (captured with headless Edge).</figcaption>
+</figure>
+
+<h2>5. Remediation (prioritised)</h2>
+<table class="data">
+  <tr><th style="width:22%">Issue</th><th style="width:40%">Fix</th><th>Verification</th></tr>
+  <tr><td>SQL injection</td><td>parameterized queries/ORM binding everywhere; exact match on email at login; disable verbose SQL errors</td><td>replaying <code>' OR 1=1--</code> returns 401</td></tr>
+  <tr><td>XSS</td><td>output encoding (Angular escapes by default; never call <code>bypassSecurityTrustHtml</code>); CSP <code>script-src 'self'</code>; HttpOnly cookies</td><td>injected <code>&lt;iframe&gt;</code> appears as escaped text</td></tr>
+  <tr><td>Broken access control</td><td>authorise basket/user resources against the session subject; never trust ids from the URL</td><td>user A's token on user B's basket returns 403</td></tr>
+  <tr><td>Sensitive data exposure</td><td>generic error pages; remove debug endpoints such as <code>/rest/admin/application-version</code></td><td>error responses contain no stack traces or SQL</td></tr>
+  <tr><td>Missing security headers</td><td>add CSP, X-Content-Type-Options, Referrer-Policy, HSTS</td><td>inspect response headers</td></tr>
+</table>
+
+<h2>6. Conclusion</h2>
+<p>Automated scanning quickly covers the common cases (missing headers, information disclosure, injection-style
+patterns), but the real business impact only appears when alerts are chained: one SQL injection both bypasses
+authentication and dumps the user table; one DOM XSS escalates to session hijacking and defeats every token-based
+authorisation check. That is why "scan → verify → model → fix" is one loop, and why the STRIDE table matters: it
+forces every component to be interrogated instead of only the ones a scanner happened to reach.</p>
+
+<h2>Appendix — evidence</h2>
+<ul>
+  <li>ZAP report: <code>zap-report.html</code> (full alerts with requests/responses)</li>
+  <li>Manual verification: <code>screenshots/02-xss-dom.png</code></li>
+  <li>Scan command: <code>docker run --rm zaproxy/zap-stable zap-baseline.py -t http://192.168.99.100:3000 -r zap-report.html</code></li>
+</ul>
+
+</body>
+</html>

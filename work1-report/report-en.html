@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Work 1 — Secure REST API, CI/CD and CVE Analysis</title>
+<link rel="stylesheet" href="../shared/report.css">
+</head>
+<body>
+
+<div class="cover">
+  <h1>Lab Work 1<br>Secure REST API, CI/CD and a Real CVE</h1>
+  <div class="sub">FastAPI + JWT &middot; GitHub Actions &middot; CVE-2021-41773 reproduction and fix</div>
+  <table>
+    <tr><td class="k">Name</td><td>Zhang San</td></tr>
+    <tr><td class="k">Student ID</td><td>12345678</td></tr>
+    <tr><td class="k">Variant</td><td>1</td></tr>
+    <tr><td class="k">Repository</td><td>github.com/huangweijie429/Information-Security-Lab1</td></tr>
+  </table>
+</div>
+
+<h2>1. Purpose</h2>
+<p>This work covers the full security lifecycle of an API: designing protection against the OWASP Top 10,
+wiring security tools into CI/CD, reproducing a real CVE in a controlled environment (the same configuration
+Vulhub uses), analysing its root cause, applying a fix and verifying both that the attack fails and that the
+application still works.</p>
+
+<h2>2. API design and implementation</h2>
+<p>Stack: <b>FastAPI + SQLite (stdlib <code>sqlite3</code>) + bcrypt + PyJWT</b>, code in <code>work1-api/</code>.</p>
+<table class="data">
+  <tr><th style="width:14%">Method</th><th style="width:24%">Path</th><th style="width:14%">Auth</th><th>Description</th></tr>
+  <tr><td>GET</td><td><code>/health</code></td><td>no</td><td>liveness probe</td></tr>
+  <tr><td>POST</td><td><code>/auth/login</code></td><td>no</td><td>accepts <code>{username, password}</code>, returns a JWT</td></tr>
+  <tr><td>GET</td><td><code>/api/data</code></td><td>Bearer</td><td>posts list, optional <code>?q=</code> filter</td></tr>
+  <tr><td>GET</td><td><code>/api/me</code></td><td>Bearer</td><td>current user profile (the self-chosen third endpoint)</td></tr>
+</table>
+
+<h2>3. Security measures</h2>
+<table class="data">
+  <tr><th style="width:22%">Risk</th><th>Implementation</th></tr>
+  <tr><td>SQL injection</td><td>Every statement uses <code>?</code> placeholders (login query and the <code>q</code> filter);
+      no string concatenation. The username field is additionally allow-listed with <code>^[A-Za-z0-9_.-]+$</code>.</td></tr>
+  <tr><td>XSS</td><td>All user-controlled fields are escaped with <code>html.escape()</code> before leaving the API;
+      a regression test asserts that <code>&lt;b&gt;</code> becomes <code>&amp;lt;b&amp;gt;</code>.</td></tr>
+  <tr><td>Broken authentication</td><td>bcrypt (cost 12) password hashes; HS256 JWT with <code>exp</code>/<code>iss</code>;
+      every protected route is guarded by an <code>HTTPBearer</code> dependency that returns 401 for missing or forged tokens.</td></tr>
+</table>
+
+<h2>4. CI/CD pipeline</h2>
+<p><code>.github/workflows/ci.yml</code> runs on every push and pull request:</p>
+<ol>
+  <li><b>SAST</b>: <code>bandit -r app</code> — no issues identified</li>
+  <li><b>SCA</b>: <code>pip-audit -r requirements.txt --strict</code> — no known vulnerabilities</li>
+  <li><b>Tests</b>: <code>pytest -q</code> — 10 tests, all passing (SQLi / XSS / auth regressions)</li>
+</ol>
+<p>Run records are on the repository's Actions page (first fully green run: 39257053599).</p>
+
+<h2>5. CVE-2021-41773 reproduction</h2>
+<p>Target: path traversal in Apache HTTP Server 2.4.49, which also enables CGI command execution with the
+right configuration. The environment (<code>work1-cve/Dockerfile</code>) mirrors the Vulhub setup: <code>mod_cgi</code>
+and <code>ScriptAlias</code> enabled, and <code>&lt;Directory /&gt;</code> set to <code>Require all granted</code>.</p>
+<table class="data">
+  <tr><th style="width:44%">Request</th><th>Vulnerable 2.4.49</th><th>Fixed 2.4.51</th></tr>
+  <tr><td><code>GET /cgi-bin/.%2e/.%2e/.%2e/.%2e/etc/passwd</code></td>
+      <td><b>HTTP 200</b>, returns <code>root:x:0:0:root:/root:/bin/bash</code></td>
+      <td>HTTP 400, no file content</td></tr>
+  <tr><td><code>POST …/bin/sh</code> with body <code>echo Content-Type: text/plain; echo; id</code></td>
+      <td><b>HTTP 200</b>, <code>uid=1(daemon) gid=1(daemon)</code></td>
+      <td>HTTP 400, no output</td></tr>
+  <tr><td><code>GET /cgi-bin/hello.sh</code> (regression)</td>
+      <td>200 hello from cgi</td>
+      <td>200 hello from cgi (functionality intact)</td></tr>
+</table>
+<p class="small">Full commands and outputs: <code>work1-cve/evidence/01–05-*.txt</code>.</p>
+
+<h2>6. Root cause</h2>
+<p>Apache 2.4.49 rewrote path normalisation (<code>ap_normalize_path</code>). The new code only expanded
+<code>%2e</code> segments for paths that start inside the document root and did not reject <code>..</code>
+sequences that escape it. A request such as <code>/.%2e/.%2e/…</code> was therefore normalised into
+<code>../../..</code> after the authorisation check but before the file lookup, bypassing access control.
+Two configuration choices turn file disclosure into code execution:</p>
+<ol>
+  <li><code>&lt;Directory /&gt;</code> grants access to the whole filesystem, so the escaped path passes authorisation;</li>
+  <li><code>mod_cgi</code> and <code>ScriptAlias</code> are enabled, so a traversed executable is run with the
+      request body as input.</li>
+</ol>
+<p>The defect class is therefore <b>improper input handling</b> (incomplete canonicalisation of a user-controlled
+path), not a memory-safety bug.</p>
+
+<h2>7. Fix and verification</h2>
+<table class="data">
+  <tr><th style="width:16%">Layer</th><th style="width:40%">Change</th><th>Why it works</th></tr>
+  <tr><td>Patch</td><td>image upgraded <code>httpd:2.4.49 → 2.4.51</code></td>
+      <td>2.4.51 rejects any normalised path that escapes the document root and also blocks the double-encoded
+          <code>%252e</code> bypass of 2.4.50</td></tr>
+  <tr><td>Hardening</td><td><code>&lt;Directory /&gt;</code> changed to <code>Require all denied</code>;
+      CGI restricted to cgi-bin</td>
+      <td>removes the second precondition: even if a future normalisation bug appears, a traversed path cannot
+          be authorised</td></tr>
+</table>
+<p>After the fix the same PoC returns 400, while the home page and legitimate CGI still work (regression passed).
+<code>poc.sh</code> verifies any instance in one command: exit code 1 for the vulnerable build, 0 for the fixed one.</p>
+
+<h2>8. Conclusion</h2>
+<p>Parameterized queries, output escaping and strong authentication push application-level injection and script
+execution risks very low, but they cannot stop <b>defects in the infrastructure itself</b>. This CVE teaches two
+lessons at once: patch promptly (remove the known defect), and apply least privilege (even without the patch,
+the impact drops from RCE to a 403). Together they are what makes a regression test able to prove both
+"the attack fails" and "the feature still works".</p>
+
+</body>
+</html>

