@@ -1,0 +1,7 @@
+services:
+  httpd:
+    build: .
+    image: hdu-is/cve-2021-41773:fixed
+    ports:
+      - "8081:80"
+    restart: unless-stopped
