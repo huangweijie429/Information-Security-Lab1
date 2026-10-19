@@ -32,7 +32,7 @@ def edge_path():
 def start_edge(url):
     subprocess.Popen([
         edge_path(), "--headless=new", f"--remote-debugging-port={PORT}",
-        "--remote-allow-origins=*",
+        "--remote-allow-origins=*", "--unsafely-treat-insecure-origin-as-secure=http://localhost:8083",
         r"--user-data-dir=D:\others\edgeprof", "--disable-gpu", "--hide-scrollbars",
         "--no-first-run", "--window-size=1440,900", url,
     ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -104,6 +104,7 @@ def main():
     ap.add_argument("--js-file", default="")
     ap.add_argument("--full", action="store_true")
     ap.add_argument("--post", type=float, default=2)
+    ap.add_argument("--steps", default="")
     a = ap.parse_args()
     if a.js_file:
         a.js = open(a.js_file, encoding="utf-8").read()
@@ -112,9 +113,38 @@ def main():
     cdp = CDP(page_target(a.url))
     cdp.send("Page.enable")
     cdp.send("Runtime.enable")
+    cdp.send("Security.enable")
+    cdp.send("Security.setIgnoreCertificateErrors", ignore=True)
     cdp.send("Page.navigate", url=a.url)
     time.sleep(a.wait)
-    if a.js:
+    if a.steps:
+        for st in json.load(open(a.steps, encoding="utf-8")):
+            if "js" in st:
+                res = cdp.send("Runtime.evaluate", expression=st["js"], awaitPromise=True, returnByValue=True)
+                val = res.get("result", {}).get("value")
+                print("STEP_JS:", str(val)[:800])
+            if "type" in st:
+                cdp.send("Input.insertText", text=st["type"])
+            if "key" in st:
+                cdp.send("Input.dispatchKeyEvent", type="keyDown", key=st["key"], windowsVirtualKeyCode=13, nativeVirtualKeyCode=13)
+                cdp.send("Input.dispatchKeyEvent", type="keyUp", key=st["key"], windowsVirtualKeyCode=13, nativeVirtualKeyCode=13)
+                print("STEP_KEY:", st["key"])
+            if "click" in st:
+                sel = json.dumps(st["click"])
+                expr = ("(()=>{const e=document.querySelector(" + sel + ");if(!e)return null;"
+                        "const r=e.getBoundingClientRect();return [r.x+r.width/2,r.y+r.height/2];})()")
+                r = cdp.send("Runtime.evaluate", expression=expr, returnByValue=True)
+                xy = r.get("result", {}).get("value")
+                if xy:
+                    cdp.send("Input.dispatchMouseEvent", type="mousePressed", x=xy[0], y=xy[1],
+                             button="left", clickCount=1)
+                    cdp.send("Input.dispatchMouseEvent", type="mouseReleased", x=xy[0], y=xy[1],
+                             button="left", clickCount=1)
+                    print("STEP_CLICK:", st["click"])
+                else:
+                    print("STEP_CLICK_MISS:", st["click"])
+            time.sleep(st.get("wait", 1))
+    elif a.js:
         res = cdp.send("Runtime.evaluate", expression=a.js, awaitPromise=True, returnByValue=True)
         val = res.get("result", {}).get("value")
         if val is not None:
