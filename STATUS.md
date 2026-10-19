@@ -19,7 +19,7 @@
 |---|---|---|
 | `01-keepassxc-unlock.png` | ✅ | KeePassXC 解锁界面（`--allow-screencapture`） |
 | `02-vault.png` | ✅ | 密码库主界面，6 个条目（含 TOTP 条目） |
-| `03-hibp.png` | ✅ | haveibeenpwned 实查结果：演示邮箱 0 次命中（真实浏览器，非 headless） |
+| `03-hibp.png` | ✅ | haveibeenpwned 实查：真实邮箱（截图打码 `2***4@qq.com`）命中 1 次泄露（Giant Tiger, 2024-03，泄露姓名/邮箱/电话/地址） |
 | `05-2fa.png` | ✅ | TOTP 生成界面，6 位码与 `keepassxc-cli show -t` 同一时刻一致（`598 298`） |
 | `06-social-audit.png` | ⛔ | 必须登录本人 VK/Telegram，无法代做；缺此一张 |
 
