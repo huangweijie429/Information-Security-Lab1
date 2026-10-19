@@ -19,8 +19,8 @@
 |---|---|---|
 | `01-keepassxc-unlock.png` | ✅ 已生成 | KeePassXC 解锁界面（`--allow-screencapture` 绕过窗口捕获保护后截取） |
 | `02-vault.png` | ✅ 已生成 | 密码库主界面，5 个账号条目 |
-| `05-2fa.png` | ⛔ 待补 | 需要能开 TOTP 的真实账号（手机验证器） |
-| `03-hibp.png` | ⛔ 待补 | 必须用本人邮箱查询，代查即伪造证据 |
+| `05-2fa.png` | 🟡 部分 | 库内 `GitHub (2FA)` 条目已配置 TOTP（时钟图标，`keepassxc-cli show -t` 可算出 6 位码）；条目详情页截图时 KeePassXC 崩溃，未能截到码 |
+| `03-hibp.png` | ⛔ 待补 | haveibeenpwned 的 Cloudflare 校验会拦截无头浏览器，且必须用本人邮箱 |
 | `06-social-audit.png` | ⛔ 待补 | 必须登录本人社交账号 |
 
 补齐后把图片放进 `work4-hygiene/screenshots/`，重新生成 PDF：
