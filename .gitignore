@@ -1,4 +1,4 @@
-__pycache__/
+﻿__pycache__/
 *.py[cod]
 .venv/
 venv/
@@ -14,6 +14,5 @@ dist/
 Thumbs.db
 
 # lab artefacts that must stay local
-work2-audit/zap-report*
 work4-hygiene/screenshots/*.png
 !work4-hygiene/screenshots/.gitkeep
