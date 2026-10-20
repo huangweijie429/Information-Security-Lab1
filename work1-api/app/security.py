@@ -11,8 +11,9 @@ TOKEN_TTL = timedelta(minutes=int(os.getenv("TOKEN_TTL_MIN", "30")))
 
 
 def _secret() -> str:
-    # Demo default only; CI/local run without JWT_SECRET still works.
-    return os.getenv("JWT_SECRET", "dev-secret-change-me")
+    # Demo default only (>= 32 bytes so PyJWT does not warn about a short HMAC key);
+    # always override with JWT_SECRET outside local experiments.
+    return os.getenv("JWT_SECRET", "dev-only-insecure-secret-change-me-0123456789abcdef")
 
 
 def hash_password(password: str) -> str:
