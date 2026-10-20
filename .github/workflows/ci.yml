@@ -1,10 +1,17 @@
 name: CI
 
+run-name: "CI - ${{ github.event.inputs.work || github.event_name }}"
+
 on:
   push:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      work:
+        description: "Label for this verification run (Work 1 / Work 2 / Work 3 / Work 4 / all)"
+        required: false
+        default: "all"
 
 permissions:
   contents: read
@@ -41,3 +48,7 @@ jobs:
           DB_PATH: ${{ runner.temp }}/ci.db
           JWT_SECRET: ci-only-hmac-key-0123456789abcdef0123456789abcdef
         run: pytest -q
+
+      - name: Validate Work 1-4 artifacts
+        working-directory: .
+        run: python shared/validate_works.py
