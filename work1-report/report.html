@@ -9,7 +9,7 @@
 
 <div class="cover">
   <h1>实验工作 1<br>安全 REST API、CI/CD 与真实 CVE 分析</h1>
-  <div class="sub">FastAPI + JWT · GitHub Actions · CVE-2021-41773 复现与修复</div>
+  <div class="sub">FastAPI + JWT · GitHub Actions · CVE-2018-12613 复现与修复</div>
   <table>
     <tr><td class="k">姓　名</td><td>Zhang San</td></tr>
     <tr><td class="k">学　号 (IDU)</td><td>12345678</td></tr>
@@ -51,50 +51,62 @@
 </ol>
 <p>运行记录：仓库 Actions 页，例如 run 39257053599（首次全绿）。</p>
 
-<h2>5. CVE-2021-41773 复现</h2>
-<p>目标：Apache HTTP Server 2.4.49 路径穿越（同时可导致 CGI 命令执行）。
-环境按 Vulhub 同款配置构建（<code>work1-cve/Dockerfile</code>）：启用 <code>mod_cgi</code> 与
-<code>ScriptAlias</code>，并把 <code>&lt;Directory /&gt;</code> 设为 <code>Require all granted</code>。</p>
+<h2>5. CVE-2018-12613 复现</h2>
+<p>目标：phpMyAdmin 4.8.1 本地文件包含（PMASA-2018-4，4.8.0/4.8.1 受影响，4.8.2 修复）。
+环境按 Vulhub 同款配置构建（<code>work1-cve/</code>）：<code>vulhub/phpmyadmin:4.8.1</code> + <code>mysql:5.5</code>，
+<code>config.inc.php</code> 用 config 认证，页面无需手工登录即可触发。</p>
 <table class="data">
-  <tr><th style="width:44%">请求</th><th>漏洞版 2.4.49</th><th>修复版 2.4.51</th></tr>
-  <tr><td><code>GET /cgi-bin/.%2e/.%2e/.%2e/.%2e/etc/passwd</code></td>
-      <td><b>HTTP 200</b>，返回 <code>root:x:0:0:root:/root:/bin/bash</code></td>
-      <td>HTTP 400，无文件内容</td></tr>
-  <tr><td><code>POST …/bin/sh</code>，body 为 <code>echo Content-Type: text/plain; echo; id</code></td>
-      <td><b>HTTP 200</b>，<code>uid=1(daemon) gid=1(daemon)</code></td>
-      <td>HTTP 400，无输出</td></tr>
-  <tr><td><code>GET /cgi-bin/hello.sh</code>（回归）</td>
-      <td>200 hello from cgi</td>
-      <td>200 hello from cgi（功能未破坏）</td></tr>
+  <tr><th style="width:44%">请求</th><th>漏洞版 4.8.1</th><th>修复版 5.2.2</th></tr>
+  <tr><td><code>GET /index.php?target=db_sql.php%253f/../../../../../../../../etc/passwd</code></td>
+      <td><b>HTTP 200</b>，页面中嵌入了 <code>root:x:0:0:root:/root:/bin/bash</code> 及整个 <code>/etc/passwd</code></td>
+      <td>HTTP 200，只返回 phpMyAdmin 页面，无文件内容</td></tr>
+  <tr><td><code>GET /</code>（回归）</td>
+      <td>200，正常 UI</td>
+      <td>200，正常登录页（功能未破坏）</td></tr>
 </table>
-<p class="small">完整命令与输出见 <code>work1-cve/evidence/01–05-*.txt</code>。</p>
+<p class="small">完整命令与输出见 <code>work1-cve/evidence/01–04-*.txt</code>。</p>
 
 <h2>6. 根因分析</h2>
-<p>2.4.49 重写了路径规范化（<code>ap_normalize_path</code>）：它只对「从文档根开始」的路径展开 <code>%2e</code> 段，
-没有拒绝逃逸出文档根的 <code>..</code> 序列，于是 <code>/.%2e/.%2e/…</code> 在鉴权检查之后、文件查找之前被规范化成
-<code>../../..</code>，绕过了访问控制。两个配置选择把「文件读取」放大成「命令执行」：</p>
+<p><code>index.php</code> 会根据 <code>target</code> 参数包含一个文件：</p>
+<pre>if (! empty($_REQUEST['target']) &amp;&amp; is_string($_REQUEST['target'])
+    &amp;&amp; ! preg_match('/^index/', $_REQUEST['target'])
+    &amp;&amp; ! in_array($_REQUEST['target'], $target_blacklist)
+    &amp;&amp; Core::checkPageValidity($_REQUEST['target'])) {
+    include $_REQUEST['target'];
+    exit;
+}</pre>
+<p><code>Core::checkPageValidity()</code> 用白名单校验参数，并在校验过程中<b>又做了一次 URL 解码</b>。
+这正是缺陷所在：</p>
 <ol>
-  <li><code>&lt;Directory /&gt;</code> 允许访问整个文件系统，使逃逸路径通过鉴权；</li>
-  <li>启用了 <code>mod_cgi</code> 与 <code>ScriptAlias</code>，被穿越到的可执行文件会以请求体作为输入被执行。</li>
+  <li>请求携带 <code>db_sql.php%253f/../../../../etc/passwd</code>；</li>
+  <li>第一次解码把 <code>%253f</code> 变成 <code>%3f</code>，白名单只看 <code>db_sql.php</code>，校验通过；</li>
+  <li><code>include</code> 解析完整字符串时 <code>%3f</code> 变成 <code>?</code>，后面的 <code>../</code> 逐级跳出 phpMyAdmin 目录。</li>
 </ol>
-<p>因此这是一个<b>输入处理缺陷</b>（用户可控路径未完整规范化），而非内存安全问题。</p>
+<p>一句话：<b>被校验的值不是被使用的值</b>——与 CVE-2021-41773 同属「解码/校验顺序」类缺陷，只是换成了 PHP。</p>
+<p>影响不止读文件：<code>config.inc.php</code> 里就是数据库凭据；公开分析还把 PHP 写进 session
+（<code>SELECT '&lt;?=phpinfo()?&gt;'</code> 会存入会话）再包含 <code>/var/lib/php/sessions/sess_&lt;PHPSESSID&gt;</code>，
+即可升级为命令执行。本环境的 <code>access.log</code> 是指向 <code>/dev/stdout</code> 的符号链接，
+日志投毒变体不可用，因此只验证到文件读取这一步。</p>
 
 <h2>7. 修复与验证</h2>
 <table class="data">
   <tr><th style="width:18%">层次</th><th style="width:40%">改动</th><th>为什么有效</th></tr>
-  <tr><td>补丁</td><td>镜像升级 <code>httpd:2.4.49 → 2.4.51</code></td>
-      <td>2.4.51 拒绝任何规范化后逃逸文档根的路径，并封堵 2.4.50 的双重编码 <code>%252e</code> 绕过</td></tr>
-  <tr><td>加固</td><td><code>&lt;Directory /&gt;</code> 改为 <code>Require all denied</code>，CGI 仅在 cgi-bin 内</td>
-      <td>移除第二个前提：即使将来再出现规范化漏洞，穿越路径也无法通过鉴权</td></tr>
+  <tr><td>补丁</td><td>升级到 <b>4.8.2</b>（PMASA-2018-4）；本实验用仍在维护的 <b>5.2.2</b></td>
+      <td><code>target</code> 只在单次解码后校验，且必须命中真实页面白名单，
+          <code>db_sql.php%253f/../…</code> 无法再通过</td></tr>
+  <tr><td>加固</td><td><code>open_basedir</code> 限制在 Web 根目录，<code>allow_url_include=Off</code>，
+      数据库账号最小权限</td>
+      <td>即便将来再出现包含缺陷，PHP 也读不到 Web 根之外的文件，也不能包含远程文件</td></tr>
 </table>
-<p>修复后同一 PoC 返回 400，正常 CGI 与首页仍可用（回归通过）。<code>poc.sh</code> 可一条命令对任意实例做验证：
-漏洞版退出码 1，修复版 0。</p>
+<p>修复后同一 PoC 只返回 phpMyAdmin 页面、无文件内容；首页/登录页仍正常（回归通过）。
+<code>poc.sh</code> 可一条命令验证任意实例：漏洞版退出码 1，修复版 0。</p>
 
 <h2>8. 结论</h2>
-<p>「参数化查询 + 输出转义 + 强认证」能把应用层的注入与脚本执行风险压到很低，但它无法阻止
-<b>基础设施组件自身的缺陷</b>。这次 CVE 的教训是双层的：及时打补丁（消除已知漏洞），
-以及最小权限配置（即使补丁缺失，也把影响面从 RCE 压到 403）。两者叠加，才让回归测试同时证明
-「攻击失效」和「功能未坏」。</p>
+<p>「参数化查询 + 输出转义 + 强认证」能把自研代码的风险压得很低，却挡不住<b>第三方组件自身的缺陷</b>：
+phpMyAdmin 是运维日常工具，一个参数校验的顺序错误就能读出服务器上的任意文件。
+这次 CVE 的教训有两层：依赖项要及时升级（消除已知缺陷），以及用最小权限兜底
+（<code>open_basedir</code>、最小权限数据库账号），让「即使有漏洞」也读不到敏感文件。
+两者叠加，回归测试才能同时证明「攻击失效」和「功能未坏」。</p>
 
 </body>
 </html>

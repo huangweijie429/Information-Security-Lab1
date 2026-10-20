@@ -1,2 +1,0 @@
-﻿REGRESSION: GET /cgi-bin/hello.sh -> HTTP 200
-hello from cgi

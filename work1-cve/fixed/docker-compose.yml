@@ -1,7 +1,18 @@
 services:
-  httpd:
-    build: .
-    image: hdu-is/cve-2021-41773:fixed
+  web:
+    build:
+      context: ..
+      dockerfile: fixed/Dockerfile
+    image: hdu-is/cve-2018-12613:fixed
     ports:
       - "8081:80"
-    restart: unless-stopped
+    depends_on:
+      - mysql
+
+  mysql:
+    image: mysql:5.5
+    environment:
+      - MYSQL_RANDOM_ROOT_PASSWORD=yes
+      - MYSQL_DATABASE=test
+      - MYSQL_USER=test
+      - MYSQL_PASSWORD=test

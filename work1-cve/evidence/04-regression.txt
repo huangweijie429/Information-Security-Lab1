@@ -1,0 +1,2 @@
+﻿Regression: GET / on the fixed build -> HTTP 200
+<title>phpMyAdmin</title> - the application is still served normally

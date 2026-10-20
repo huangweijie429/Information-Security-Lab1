@@ -5,7 +5,7 @@
 | Work | 交付物 | 状态 | 位置 |
 |---|---|---|---|
 | 1 | FastAPI 应用 + 测试 + CI | ✅ CI 全绿（bandit / pip-audit / pytest） | `work1-api/`，Actions 运行记录见仓库 Actions 页 |
-| 1 | CVE-2021-41773 复现与修复 | ✅ 漏洞版读到 `/etc/passwd`、RCE 得 `uid=1(daemon)`；修复版返回 400，回归通过 | `work1-cve/`，证据 `work1-cve/evidence/` |
+| 1 | CVE-2018-12613 复现与修复 | ✅ 漏洞版 phpMyAdmin 4.8.1 读出 `/etc/passwd`；修复版 5.2.2 无文件内容，回归通过 | `work1-cve/`，证据 `work1-cve/evidence/` |
 | 2 | DAST + STRIDE 审计报告 | ✅ 6 页 PDF，12 条发现（3 条手工验证 + 9 条 ZAP） | `../Work2-Web安全审计报告.pdf`（Lab 根目录） |
 | 2 | ZAP 导出 | ✅ HTML + JSON | `work2-audit/zap-report.*` |
 | 2 | XSS 验证截图 | ✅ 真实执行证明（页面被注入脚本改写） | `work2-audit/screenshots/02-xss-dom.png` |

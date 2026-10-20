@@ -9,7 +9,7 @@
 
 <div class="cover">
   <h1>Lab Work 1<br>Secure REST API, CI/CD and a Real CVE</h1>
-  <div class="sub">FastAPI + JWT &middot; GitHub Actions &middot; CVE-2021-41773 reproduction and fix</div>
+  <div class="sub">FastAPI + JWT &middot; GitHub Actions &middot; CVE-2018-12613 reproduction and fix</div>
   <table>
     <tr><td class="k">Name</td><td>Zhang San</td></tr>
     <tr><td class="k">Student ID</td><td>12345678</td></tr>
@@ -54,58 +54,69 @@ application still works.</p>
 </ol>
 <p>Run records are on the repository's Actions page (first fully green run: 39257053599).</p>
 
-<h2>5. CVE-2021-41773 reproduction</h2>
-<p>Target: path traversal in Apache HTTP Server 2.4.49, which also enables CGI command execution with the
-right configuration. The environment (<code>work1-cve/Dockerfile</code>) mirrors the Vulhub setup: <code>mod_cgi</code>
-and <code>ScriptAlias</code> enabled, and <code>&lt;Directory /&gt;</code> set to <code>Require all granted</code>.</p>
+<h2>5. CVE-2018-12613 reproduction</h2>
+<p>Target: local file inclusion in phpMyAdmin 4.8.1 (PMASA-2018-4; 4.8.0 and 4.8.1 affected, fixed in 4.8.2).
+The environment in <code>work1-cve/</code> mirrors the public Vulhub setup: <code>vulhub/phpmyadmin:4.8.1</code>
+plus <code>mysql:5.5</code>, with <code>config.inc.php</code> in <code>config</code> auth mode so the page can be
+triggered without a manual login.</p>
 <table class="data">
-  <tr><th style="width:44%">Request</th><th>Vulnerable 2.4.49</th><th>Fixed 2.4.51</th></tr>
-  <tr><td><code>GET /cgi-bin/.%2e/.%2e/.%2e/.%2e/etc/passwd</code></td>
-      <td><b>HTTP 200</b>, returns <code>root:x:0:0:root:/root:/bin/bash</code></td>
-      <td>HTTP 400, no file content</td></tr>
-  <tr><td><code>POST …/bin/sh</code> with body <code>echo Content-Type: text/plain; echo; id</code></td>
-      <td><b>HTTP 200</b>, <code>uid=1(daemon) gid=1(daemon)</code></td>
-      <td>HTTP 400, no output</td></tr>
-  <tr><td><code>GET /cgi-bin/hello.sh</code> (regression)</td>
-      <td>200 hello from cgi</td>
-      <td>200 hello from cgi (functionality intact)</td></tr>
+  <tr><th style="width:44%">Request</th><th>Vulnerable 4.8.1</th><th>Fixed 5.2.2</th></tr>
+  <tr><td><code>GET /index.php?target=db_sql.php%253f/../../../../../../../../etc/passwd</code></td>
+      <td><b>HTTP 200</b>, the page embeds <code>root:x:0:0:root:/root:/bin/bash</code> and the rest of <code>/etc/passwd</code></td>
+      <td>HTTP 200, phpMyAdmin page only &mdash; no file content</td></tr>
+  <tr><td><code>GET /</code> (regression)</td>
+      <td>200, normal UI</td>
+      <td>200, normal login page (functionality intact)</td></tr>
 </table>
-<p class="small">Full commands and outputs: <code>work1-cve/evidence/01–05-*.txt</code>.</p>
+<p class="small">Full commands and outputs: <code>work1-cve/evidence/01–04-*.txt</code>.</p>
 
 <h2>6. Root cause</h2>
-<p>Apache 2.4.49 rewrote path normalisation (<code>ap_normalize_path</code>). The new code only expanded
-<code>%2e</code> segments for paths that start inside the document root and did not reject <code>..</code>
-sequences that escape it. A request such as <code>/.%2e/.%2e/…</code> was therefore normalised into
-<code>../../..</code> after the authorisation check but before the file lookup, bypassing access control.
-Two configuration choices turn file disclosure into code execution:</p>
+<p><code>index.php</code> includes a file chosen by the <code>target</code> request parameter:</p>
+<pre>if (! empty($_REQUEST['target']) &amp;&amp; is_string($_REQUEST['target'])
+    &amp;&amp; ! preg_match('/^index/', $_REQUEST['target'])
+    &amp;&amp; ! in_array($_REQUEST['target'], $target_blacklist)
+    &amp;&amp; Core::checkPageValidity($_REQUEST['target'])) {
+    include $_REQUEST['target'];
+    exit;
+}</pre>
+<p><code>Core::checkPageValidity()</code> validates the value against a whitelist of pages and <b>decodes it a
+second time</b> while doing so. That double decoding is the flaw:</p>
 <ol>
-  <li><code>&lt;Directory /&gt;</code> grants access to the whole filesystem, so the escaped path passes authorisation;</li>
-  <li><code>mod_cgi</code> and <code>ScriptAlias</code> are enabled, so a traversed executable is run with the
-      request body as input.</li>
+  <li>the request carries <code>db_sql.php%253f/../../../../etc/passwd</code>;</li>
+  <li>the first URL decode turns <code>%253f</code> into <code>%3f</code>, so the whitelist only sees
+      <code>db_sql.php</code> and passes;</li>
+  <li><code>include</code> then resolves the whole string, where <code>%3f</code> is a <code>?</code> and the
+      <code>../</code> segments climb out of the phpMyAdmin directory.</li>
 </ol>
-<p>The defect class is therefore <b>improper input handling</b> (incomplete canonicalisation of a user-controlled
-path), not a memory-safety bug.</p>
+<p>In short: <b>the value that is validated is not the value that is used</b> — the same
+decode/validate ordering family as CVE-2021-41773, only in PHP instead of C.</p>
+<p>The impact goes beyond reading files: <code>config.inc.php</code> holds database credentials, and public
+write-ups escalate to code execution by storing PHP in the session (<code>SELECT '&lt;?=phpinfo()?&gt;'</code>)
+and then including <code>/var/lib/php/sessions/sess_&lt;PHPSESSID&gt;</code>. In this container
+<code>access.log</code> is a symlink to <code>/dev/stdout</code>, so the log-poisoning variant is unavailable and
+only the file-read step was verified here.</p>
 
 <h2>7. Fix and verification</h2>
 <table class="data">
   <tr><th style="width:16%">Layer</th><th style="width:40%">Change</th><th>Why it works</th></tr>
-  <tr><td>Patch</td><td>image upgraded <code>httpd:2.4.49 → 2.4.51</code></td>
-      <td>2.4.51 rejects any normalised path that escapes the document root and also blocks the double-encoded
-          <code>%252e</code> bypass of 2.4.50</td></tr>
-  <tr><td>Hardening</td><td><code>&lt;Directory /&gt;</code> changed to <code>Require all denied</code>;
-      CGI restricted to cgi-bin</td>
-      <td>removes the second precondition: even if a future normalisation bug appears, a traversed path cannot
-          be authorised</td></tr>
+  <tr><td>Patch</td><td>upgrade to <b>4.8.2</b> (PMASA-2018-4); this lab uses the maintained <b>5.2.2</b></td>
+      <td><code>target</code> is validated after a single decode and must match a real page, so
+          <code>db_sql.php%253f/../…</code> no longer passes the whitelist</td></tr>
+  <tr><td>Hardening</td><td><code>open_basedir</code> limited to the web root, <code>allow_url_include=Off</code>,
+      least-privilege database account</td>
+      <td>even with a future include bug, PHP cannot read outside the web root or fetch remote files</td></tr>
 </table>
-<p>After the fix the same PoC returns 400, while the home page and legitimate CGI still work (regression passed).
-<code>poc.sh</code> verifies any instance in one command: exit code 1 for the vulnerable build, 0 for the fixed one.</p>
+<p>After the fix the same request returns the phpMyAdmin page with no file content, while the UI still works
+(regression passed). <code>poc.sh</code> verifies any instance in one command: exit code 1 for the vulnerable
+build, 0 for the fixed one.</p>
 
 <h2>8. Conclusion</h2>
-<p>Parameterized queries, output escaping and strong authentication push application-level injection and script
-execution risks very low, but they cannot stop <b>defects in the infrastructure itself</b>. This CVE teaches two
-lessons at once: patch promptly (remove the known defect), and apply least privilege (even without the patch,
-the impact drops from RCE to a 403). Together they are what makes a regression test able to prove both
-"the attack fails" and "the feature still works".</p>
+<p>Parameterized queries, output escaping and strong authentication push the risk in your own code very low, but
+they cannot stop <b>defects in third-party components</b>. phpMyAdmin is an everyday operations tool, and one
+ordering mistake in a parameter check is enough to read any file on the server. The lesson is twofold: keep
+dependencies patched, and add least privilege as a safety net (<code>open_basedir</code>, a minimal database
+account) so that "even with the bug" no sensitive file is reachable. Together they are what lets a regression test
+prove both "the attack fails" and "the feature still works".</p>
 
 </body>
 </html>

