@@ -38,17 +38,37 @@ jobs:
           pip install -r requirements.txt -r requirements-dev.txt
 
       - name: SAST - bandit
-        run: bandit -r app -x app/__pycache__ -f txt
+        run: |
+          mkdir -p ../reports
+          bandit -r app -x app/__pycache__ -f json -o ../reports/bandit-report.json
+          bandit -r app -x app/__pycache__ -f txt
 
       - name: SCA - pip-audit
-        run: pip-audit -r requirements.txt --strict
+        run: |
+          mkdir -p ../reports
+          pip-audit -r requirements.txt --strict -f json -o ../reports/pip-audit-report.json
 
       - name: Tests
         env:
           DB_PATH: ${{ runner.temp }}/ci.db
           JWT_SECRET: ci-only-hmac-key-0123456789abcdef0123456789abcdef
-        run: pytest -q
+        run: |
+          mkdir -p ../reports
+          pytest -q --junitxml=../reports/pytest-report.xml
 
       - name: Validate Work 1-4 artifacts
         working-directory: .
-        run: python shared/validate_works.py
+        run: python shared/validate_works.py --json reports/validation-report.json
+
+      - name: Build security-report.json
+        working-directory: .
+        run: python shared/build_security_report.py reports
+
+      - name: Upload security report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: security-report
+          path: reports/
+          if-no-files-found: warn
+          retention-days: 90

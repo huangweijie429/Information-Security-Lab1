@@ -82,4 +82,25 @@ for work, name, ok, detail in results:
 failed = [r for r in results if not r[2]]
 print()
 print(f"TOTAL {len(results)} checks, {len(results) - len(failed)} passed, {len(failed)} failed")
+
+if "--json" in sys.argv:
+    out = pathlib.Path(sys.argv[sys.argv.index("--json") + 1])
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(
+        json.dumps(
+            {
+                "total": len(results),
+                "passed": len(results) - len(failed),
+                "failed": len(failed),
+                "checks": [
+                    {"work": w, "name": n, "ok": ok, "detail": d} for w, n, ok, d in results
+                ],
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    print(f"wrote {out}")
+
 sys.exit(1 if failed else 0)

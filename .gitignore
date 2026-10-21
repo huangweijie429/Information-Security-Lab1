@@ -13,6 +13,9 @@ dist/
 .DS_Store
 Thumbs.db
 
+# CI scan output (uploaded as the security-report artifact, not committed)
+reports/
+
 # lab artefacts that must stay local
 work4-hygiene/screenshots/*.png
 !work4-hygiene/screenshots/.gitkeep
