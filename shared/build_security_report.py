@@ -124,12 +124,61 @@ def main() -> int:
     out = REPORTS / "security-report.json"
     out.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
 
+    titles = {
+        "Work 1": "Secure REST API, CI/CD and CVE-2018-12613 reproduction",
+        "Work 2": "Web application security audit (DAST + STRIDE)",
+        "Work 3": "Computer attacks: SQL injection as a directed graph",
+        "Work 4": "Password audit, leak check and digital hygiene",
+    }
+    by_work: dict[str, list] = {}
+    for c in works.get("checks", []) if isinstance(works, dict) else []:
+        by_work.setdefault(c.get("work", "unknown"), []).append(c)
+
+    per_work_lines = []
+    for i in range(1, 5):
+        key = f"Work {i}"
+        items = by_work.get(key, [])
+        passed = sum(1 for c in items if c.get("ok"))
+        entry = {
+            "work": key,
+            "title": titles[key],
+            "status": "pass" if items and passed == len(items) else "fail",
+            "generated_at": report["generated_at"],
+            "repository": report["repository"],
+            "commit": report["commit"],
+            "run_id": report["run_id"],
+            "checks": {
+                "total": len(items),
+                "passed": passed,
+                "failed": len(items) - passed,
+                "items": items,
+            },
+        }
+        if i == 1:
+            entry["security"] = {
+                "sast_bandit": {"findings": bandit.get("findings", 0), "by_severity": bandit.get("by_severity", {})},
+                "sca_pip_audit": {
+                    "packages_checked": pip.get("packages_checked", 0),
+                    "vulnerable_packages": pip.get("vulnerable_packages", 0),
+                },
+                "tests_pytest": {
+                    "passed": report["summary"]["tests_passed"],
+                    "failed": report["summary"]["tests_failed"],
+                },
+            }
+        path = REPORTS / f"work{i}-report.json"
+        path.write_text(json.dumps(entry, ensure_ascii=False, indent=2), encoding="utf-8")
+        per_work_lines.append(f"  work{i}-report.json       : {key} - {entry['status']} ({passed}/{len(items)} checks)")
+
     s = report["summary"]
     print(f"security-report.json written to {out}")
     print(f"  bandit findings        : {s['bandit_findings']}")
     print(f"  pip-audit vulnerabilities: {s['pip_audit_vulnerabilities']}")
     print(f"  tests                  : {s['tests_passed']} passed, {s['tests_failed']} failed")
     print(f"  work checks            : {s['works_checks']} total, {s['works_failed']} failed")
+    print("per-work reports:")
+    for line in per_work_lines:
+        print(line)
 
     ok = (
         s["bandit_findings"] == 0

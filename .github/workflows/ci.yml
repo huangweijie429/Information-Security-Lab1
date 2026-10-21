@@ -60,7 +60,7 @@ jobs:
         working-directory: .
         run: python shared/validate_works.py --json reports/validation-report.json
 
-      - name: Build security-report.json
+      - name: Build security reports (all + per work)
         working-directory: .
         run: python shared/build_security_report.py reports
 
